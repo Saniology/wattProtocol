@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="$WATT Protocol — Earn crypto tokens for generating renewable energy. Born in Africa, built for the world.">
+<title>$WATT Protocol — Energy to Earn</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg width='128' height='128' viewBox='0 0 128 128' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Ccircle cx='64' cy='64' r='64' fill='%23070400'/%3E%3Cdefs%3E%3CradialGradient id='fg' cx='38%25' cy='30%25' r='75%25'%3E%3Cstop offset='0%25' stop-color='%23FFF8CC'/%3E%3Cstop offset='28%25' stop-color='%23F5C518'/%3E%3Cstop offset='62%25' stop-color='%23D4920E'/%3E%3Cstop offset='100%25' stop-color='%238A5500'/%3E%3C/radialGradient%3E%3Cmask id='fm'%3E%3Crect width='128' height='128' fill='white'/%3E%3Cpath d='M73 20 L48 64 H66 L58 108 L82 60 H65 Z' fill='black'/%3E%3C/mask%3E%3C/defs%3E%3Ccircle cx='64' cy='64' r='56' fill='url(%23fg)' mask='url(%23fm)'/%3E%3Cpath d='M73 20 L48 64 H66 L58 108 L82 60 H65 Z' fill='%23070400'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="shared.css">
+<style>
+/* ── HERO ── */
+.hero {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  position: relative;
+  padding-top: 72px;
+  overflow: hidden;
+}
+.hero-left {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 80px 60px 80px 80px;
+  position: relative;
+  z-index: 2;
+}
+.hero-right {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.hero-glow {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 70% 60% at 80% 40%, rgba(245,230,66,0.07) 0%, transparent 70%),
+    radial-gradient(ellipse 50% 50% at 20% 80%, rgba(232,96,10,0.04) 0%, transparent 60%);
+}
+.hero-h1 {
+  font-family: var(--font-display);
+  font-size: clamp(72px, 9vw, 140px);
+  line-height: 0.88;
+  letter-spacing: 1px;
+  margin-bottom: 36px;
+  animation: fadeUp 1s ease 0.3s both;
+}
+.hero-h1 .line2 { color: var(--yellow); }
+.hero-h1 .line3 { -webkit-text-stroke: 1.5px rgba(242,239,232,0.4); color: transparent; }
+.hero-sub {
+  font-size: 17px;
+  line-height: 1.85;
+  color: var(--gray5);
+  max-width: 480px;
+  margin-bottom: 48px;
+  font-weight: 400;
+  animation: fadeUp 1s ease 0.5s both;
+}
+.hero-sub strong { color: var(--white); font-weight: 600; }
+.hero-actions {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  flex-wrap: wrap;
+  animation: fadeUp 1s ease 0.7s both;
+  margin-bottom: 64px;
+}
+.hero-stats {
+  display: grid;
+  grid-template-columns: repeat(3,1fr);
+  border-top: 1px solid var(--border);
+  padding-top: 40px;
+  animation: fadeUp 1s ease 0.9s both;
+}
+.hero-stat { padding-right: 24px; border-right: 1px solid var(--border); }
+.hero-stat:last-child { border-right: none; padding-right: 0; padding-left: 24px; }
+.hero-stat:nth-child(2) { padding: 0 24px; }
+.hero-stat-num {
+  font-family: var(--font-display);
+  font-size: 40px;
+  color: var(--yellow);
+  line-height: 1;
+}
+.hero-stat-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--gray4);
+  margin-top: 4px;
+}
+
+/* Energy globe visual */
+.energy-visual {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--gray1);
+}
+.energy-orb {
+  width: 280px; height: 280px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, rgba(245,230,66,0.9), rgba(232,96,10,0.7), rgba(8,10,14,0.9));
+  box-shadow:
+    0 0 80px rgba(245,230,66,0.25),
+    0 0 160px rgba(232,96,10,0.1),
+    inset 0 0 60px rgba(0,0,0,0.5);
+  animation: orb-float 6s ease-in-out infinite;
+  position: relative;
+  z-index: 2;
+}
+.energy-orb-inner {
+  position: absolute;
+  inset: 20px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 30% 30%, rgba(245,230,66,0.3), transparent 60%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+}
+.orb-symbol {
+  font-family: var(--font-display);
+  font-size: 64px;
+  color: var(--black);
+  line-height: 1;
+}
+.orb-sub {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 3px;
+  color: rgba(8,10,14,0.7);
+}
+.energy-ring {
+  position: absolute;
+  border-radius: 50%;
+  border: 1px solid rgba(245,230,66,0.15);
+  animation: ring-pulse 4s ease-in-out infinite;
+}
+.energy-ring:nth-child(1){ width:360px;height:360px;animation-delay:0s; }
+.energy-ring:nth-child(2){ width:460px;height:460px;animation-delay:0.8s; }
+.energy-ring:nth-child(3){ width:560px;height:560px;animation-delay:1.6s; }
+.energy-data-tag {
+  position: absolute;
+  background: rgba(8,10,14,0.9);
+  border: 1px solid var(--border);
+  padding: 12px 18px;
+  backdrop-filter: blur(8px);
+}
+.edt-label { font-family: var(--font-mono); font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--gray4); margin-bottom: 4px; }
+.edt-val { font-family: var(--font-display); font-size: 22px; color: var(--yellow); }
+.edt1 { top: 20%; left: 5%; }
+.edt2 { bottom: 25%; right: 5%; }
+.edt3 { top: 60%; left: 5%; }
+
+/* Ticker */
+.ticker {
+  background: var(--yellow);
+  padding: 12px 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.ticker-track {
+  display: inline-flex;
+  animation: ticker-scroll 28s linear infinite;
+  width: max-content;
+}
+.ticker-item {
+  font-family: var(--font-display);
+  font-size: 18px;
+  letter-spacing: 3px;
+  color: var(--black);
+  padding: 0 36px;
+  display: flex;
+  align-items: center;
+  gap: 36px;
+}
+.ticker-sep { color: var(--orange); font-size: 12px; }
+
+/* How it works preview */
+.hiw-section { padding: 120px 80px; position: relative; }
+.hiw-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 2px; margin-top: 64px; }
+.hiw-card {
+  background: var(--gray2);
+  padding: 40px 32px;
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.3s ease;
+}
+.hiw-card:hover { transform: translateY(-6px); }
+.hiw-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: var(--yellow);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.4s;
+}
+.hiw-card:hover::before { transform: scaleX(1); }
+.hiw-num {
+  font-family: var(--font-display);
+  font-size: 80px;
+  color: rgba(245,230,66,0.06);
+  line-height: 1;
+  position: absolute;
+  top: 16px; right: 20px;
+}
+.hiw-icon { font-size: 32px; margin-bottom: 20px; }
+.hiw-title { font-family: var(--font-display); font-size: 24px; letter-spacing: 1px; color: var(--yellow); margin-bottom: 12px; }
+.hiw-desc { font-size: 14px; line-height: 1.75; color: var(--gray5); }
+.hiw-link { margin-top: 80px; text-align: center; }
+
+/* SDG preview */
+.sdg-preview { padding: 120px 80px; background: var(--gray1); position: relative; overflow: hidden; }
+.sdg-inner { display: grid; grid-template-columns: 1fr 1fr; gap: 80px; align-items: center; }
+.sdg-goals { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 40px; }
+.sdg-goal {
+  background: var(--gray2);
+  padding: 20px;
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  border-left: 3px solid transparent;
+  transition: border-color 0.3s;
+}
+.sdg-goal:hover { border-left-color: var(--yellow); }
+.sdg-icon { font-size: 28px; flex-shrink: 0; }
+.sdg-num { font-family: var(--font-mono); font-size: 9px; letter-spacing: 2px; color: var(--orange); margin-bottom: 4px; }
+.sdg-name { font-size: 13px; font-weight: 600; color: var(--white); line-height: 1.3; }
+.sdg-visual { position: relative; }
+.sdg-token-display {
+  background: var(--gray2);
+  border: 1px solid var(--border);
+  padding: 40px;
+  text-align: center;
+}
+.sdg-token-pct {
+  font-family: var(--font-display);
+  font-size: 96px;
+  color: var(--yellow);
+  line-height: 1;
+}
+.sdg-token-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: var(--gray5);
+  margin-top: 8px;
+}
+.sdg-token-amount {
+  font-family: var(--font-display);
+  font-size: 28px;
+  color: var(--orange);
+  margin-top: 12px;
+}
+.sdg-bars { margin-top: 24px; display: flex; flex-direction: column; gap: 8px; }
+.sdg-bar-row { display: flex; align-items: center; gap: 12px; }
+.sdg-bar-label { font-family: var(--font-mono); font-size: 9px; letter-spacing: 1px; color: var(--gray5); min-width: 80px; text-align: right; }
+.sdg-bar-track { flex: 1; height: 6px; background: var(--gray3); }
+.sdg-bar-fill { height: 100%; background: var(--yellow); transition: width 1.5s ease; }
+.sdg-bar-fill.orange { background: var(--orange); }
+.sdg-bar-fill.green { background: var(--green); }
+
+/* Token preview */
+.token-preview { padding: 120px 80px; }
+.token-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 2px; margin-top: 64px; }
+.token-card { background: var(--gray2); padding: 36px 28px; text-align: center; }
+.tc-num { font-family: var(--font-display); font-size: 52px; color: var(--yellow); line-height: 1; }
+.tc-label { font-family: var(--font-mono); font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--gray4); margin-top: 8px; }
+
+/* Waitlist */
+.waitlist-section {
+  padding: 120px 80px;
+  background: var(--gray1);
+  position: relative;
+  text-align: center;
+  overflow: hidden;
+}
+.waitlist-glow {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%,-50%);
+  width: 600px; height: 600px;
+  background: radial-gradient(circle, rgba(245,230,66,0.04) 0%, transparent 70%);
+  pointer-events: none;
+}
+.waitlist-title { font-family: var(--font-display); font-size: clamp(48px,7vw,100px); line-height: 0.92; margin-bottom: 20px; position: relative; }
+.waitlist-sub { font-size: 16px; color: var(--gray5); max-width: 480px; margin: 0 auto 48px; line-height: 1.8; position: relative; }
+.waitlist-form {
+  display: flex;
+  max-width: 520px;
+  margin: 0 auto;
+  position: relative;
+}
+.waitlist-form input {
+  flex: 1;
+  padding: 18px 24px;
+  background: var(--gray2);
+  border: 1px solid var(--border);
+  border-right: none;
+  color: var(--white);
+  font-family: var(--font-body);
+  font-size: 15px;
+  outline: none;
+  transition: border-color 0.3s;
+}
+.waitlist-form input:focus { border-color: var(--yellow); }
+.waitlist-form input::placeholder { color: var(--gray4); }
+.waitlist-form button {
+  background: var(--yellow);
+  color: var(--black);
+  border: none;
+  padding: 18px 32px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  font-weight: 700;
+  transition: background 0.3s;
+  white-space: nowrap;
+}
+.waitlist-form button:hover { background: var(--orange); color: var(--white); }
+.waitlist-success { display: none; margin-top: 16px; font-family: var(--font-mono); font-size: 12px; letter-spacing: 2px; color: var(--green); }
+.waitlist-note { margin-top: 16px; font-family: var(--font-mono); font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--gray4); position: relative; }
+
+/* Global map strip */
+.map-strip { padding: 80px; background: var(--gray2); }
+.map-strip-title { font-family: var(--font-mono); font-size: 10px; letter-spacing: 4px; text-transform: uppercase; color: var(--gray4); text-align: center; margin-bottom: 40px; }
+.map-regions { display: flex; justify-content: center; gap: 0; flex-wrap: wrap; }
+.map-region {
+  padding: 20px 28px;
+  border-right: 1px solid var(--border);
+  text-align: center;
+  transition: background 0.3s;
+}
+.map-region:last-child { border-right: none; }
+.map-region:hover { background: rgba(245,230,66,0.04); }
+.mr-flag { font-size: 28px; margin-bottom: 8px; }
+.mr-name { font-family: var(--font-mono); font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--gray5); }
+.mr-status { font-size: 10px; color: var(--orange); margin-top: 4px; }
+.mr-status.live { color: var(--green); }
+
+@keyframes discGlow { 0%,100%{filter:drop-shadow(0 0 18px rgba(245,197,24,0.35));} 50%{filter:drop-shadow(0 0 52px rgba(245,197,24,0.7)) drop-shadow(0 0 90px rgba(245,197,24,0.2));} }
+@keyframes fadeUp { from{opacity:0;transform:translateY(28px);}to{opacity:1;transform:translateY(0);} }
+@keyframes orb-float { 0%,100%{transform:translateY(0);}50%{transform:translateY(-18px);} }
+@keyframes ring-pulse { 0%,100%{opacity:0.3;transform:scale(1);}50%{opacity:0.05;transform:scale(1.04);} }
+@keyframes ticker-scroll { from{transform:translateX(0);}to{transform:translateX(-50%);} }
+
+@media(max-width:900px){
+  .hero{grid-template-columns:1fr;min-height:auto;}
+  .hero-left{padding:100px 24px 60px;}
+  .hero-right{min-height:50vw;}
+  .energy-ring{display:none;}
+  .hiw-section,.sdg-preview,.token-preview,.waitlist-section,.map-strip{padding-left:24px;padding-right:24px;}
+  .hiw-grid{grid-template-columns:1fr 1fr;}
+  .sdg-inner{grid-template-columns:1fr;}
+  .token-grid{grid-template-columns:1fr 1fr;}
+  .map-strip{padding:48px 24px;}
+  .hero-stats{grid-template-columns:1fr;}
+  .hero-stat{border-right:none;border-bottom:1px solid var(--border);padding:16px 0;}
+  .hero-stat:last-child{border-bottom:none;}
+}
+@media(max-width:600px){
+  .hiw-grid{grid-template-columns:1fr;}
+  .sdg-goals{grid-template-columns:1fr;}
+  .token-grid{grid-template-columns:1fr;}
+  .waitlist-form{flex-direction:column;}
+  .waitlist-form input{border-right:1px solid var(--border);border-bottom:none;}
+}
+</style>
+</head>
+<body>
+<div class="grid-texture" style="position:fixed;inset:0;pointer-events:none;z-index:0;"></div>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-glow"></div>
+  <div class="hero-left">
+    <div class="tag"><svg width="18" height="18" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg"><defs><radialGradient id="tg1" cx="38%" cy="30%" r="75%"><stop offset="0%" stop-color="#FFF8CC"/><stop offset="28%" stop-color="#F5C518"/><stop offset="62%" stop-color="#D4920E"/><stop offset="100%" stop-color="#8A5500"/></radialGradient><mask id="tm1"><rect width="128" height="128" fill="white"/><path d="M73 20 L48 64 H66 L58 108 L82 60 H65 Z" fill="black"/></mask></defs><circle cx="64" cy="64" r="64" fill="#070400"/><circle cx="64" cy="64" r="56" fill="url(#tg1)" mask="url(#tm1)"/><path d="M73 20 L48 64 H66 L58 108 L82 60 H65 Z" fill="#070400"/><circle cx="64" cy="64" r="62" stroke="#F5C518" stroke-width="1.5" stroke-opacity="0.35" fill="none"/></svg> $WATT Protocol</div>
+    <h1 class="hero-h1">
+      ENERGY<br>
+      <span class="line2">TO</span><br>
+      <span class="line3">EARN.</span>
+    </h1>
+    <p class="hero-sub">
+      Generate <strong>solar energy.</strong> Earn <strong>$WATT tokens</strong> automatically. Every kilowatt you produce is verified on-chain and rewarded — anywhere on Earth, without intermediaries.
+    </p>
+    <div class="hero-actions">
+      <a href="#waitlist" class="btn btn-primary">⚡ Join the Waitlist</a>
+      <a href="how-it-works.html" class="btn btn-outline">How It Works →</a>
+    </div>
+    <div class="hero-stats">
+      <div class="hero-stat">
+        <div class="hero-stat-num">1B</div>
+        <div class="hero-stat-label">Total $WATT Supply</div>
+      </div>
+      <div class="hero-stat">
+        <div class="hero-stat-num">1KWh</div>
+        <div class="hero-stat-label">= 1 $WATT Earned</div>
+      </div>
+      <div class="hero-stat">
+        <div class="hero-stat-num">7+</div>
+        <div class="hero-stat-label">Global Regions</div>
+      </div>
+    </div>
+  </div>
+  <div class="hero-right">
+    <div class="energy-visual">
+      <div class="energy-ring"></div>
+      <div class="energy-ring"></div>
+      <div class="energy-ring"></div>
+      <div style="position:relative;z-index:2;display:flex;align-items:center;justify-content:center;"><svg width="200" height="200" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg" style="animation:discGlow 3.5s ease-in-out infinite;filter:drop-shadow(0 0 40px rgba(245,197,24,0.4))"><defs><radialGradient id="dHero" cx="38%" cy="30%" r="75%"><stop offset="0%" stop-color="#FFF8CC"/><stop offset="28%" stop-color="#F5C518"/><stop offset="62%" stop-color="#D4920E"/><stop offset="100%" stop-color="#8A5500"/></radialGradient><mask id="mHero"><rect width="128" height="128" fill="white"/><path d="M73 20 L48 64 H66 L58 108 L82 60 H65 Z" fill="black"/></mask></defs><circle cx="64" cy="64" r="64" fill="#070400"/><circle cx="64" cy="64" r="56" fill="url(#dHero)" mask="url(#mHero)"/><path d="M73 20 L48 64 H66 L58 108 L82 60 H65 Z" fill="#070400"/><circle cx="64" cy="64" r="62" stroke="#F5C518" stroke-width="1.5" stroke-opacity="0.35" fill="none"/></svg></div>
+      <div class="energy-data-tag edt1">
+        <div class="edt-label">Live kWh</div>
+        <div class="edt-val" id="liveKwh">14.7</div>
+      </div>
+      <div class="energy-data-tag edt2">
+        <div class="edt-label">Earned Today</div>
+        <div class="edt-val" id="earnedToday">14.7 $W</div>
+      </div>
+      <div class="energy-data-tag edt3">
+        <div class="edt-label">Live Watts</div>
+        <div class="edt-val" id="liveWatts">247W</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- TICKER -->
+<div class="ticker">
+  <div class="ticker-track">
+    <div class="ticker-item">GENERATE ENERGY <span class="ticker-sep">◆</span> EARN $WATT <span class="ticker-sep">◆</span> CLEAN PLANET <span class="ticker-sep">◆</span> REAL REWARDS <span class="ticker-sep">◆</span> BORN IN AFRICA <span class="ticker-sep">◆</span> BUILT FOR THE WORLD <span class="ticker-sep">◆</span> SOLAR TO CRYPTO <span class="ticker-sep">◆</span> 0% VC PRESALE <span class="ticker-sep">◆</span> 60% EARNED BY USERS <span class="ticker-sep">◆</span></div>
+    <div class="ticker-item">GENERATE ENERGY <span class="ticker-sep">◆</span> EARN $WATT <span class="ticker-sep">◆</span> CLEAN PLANET <span class="ticker-sep">◆</span> REAL REWARDS <span class="ticker-sep">◆</span> BORN IN AFRICA <span class="ticker-sep">◆</span> BUILT FOR THE WORLD <span class="ticker-sep">◆</span> SOLAR TO CRYPTO <span class="ticker-sep">◆</span> 0% VC PRESALE <span class="ticker-sep">◆</span> 60% EARNED BY USERS <span class="ticker-sep">◆</span></div>
+  </div>
+</div>
+
+<!-- HOW IT WORKS PREVIEW -->
+<section class="hiw-section">
+  <div class="tag reveal">The Process</div>
+  <h2 class="section-title reveal">HOW<br><span class="hl">$WATT</span><br><span class="ol">WORKS</span></h2>
+  <div class="hiw-grid">
+    <div class="hiw-card reveal">
+      <div class="hiw-num">01</div>
+      <div class="hiw-icon">🔌</div>
+      <div class="hiw-title">Install Meter</div>
+      <div class="hiw-desc">Attach the WATT Smart Meter to any solar panel or inverter. No rewiring. Under 30 minutes. Works in any country.</div>
+    </div>
+    <div class="hiw-card reveal">
+      <div class="hiw-num">02</div>
+      <div class="hiw-icon">📡</div>
+      <div class="hiw-title">Measure Energy</div>
+      <div class="hiw-desc">The meter measures your energy generation with ±1% accuracy every 15 minutes and cryptographically signs the data.</div>
+    </div>
+    <div class="hiw-card reveal">
+      <div class="hiw-num">03</div>
+      <div class="hiw-icon">⛓️</div>
+      <div class="hiw-title">Verify On-Chain</div>
+      <div class="hiw-desc">Smart contracts on Base network verify the data signature. Tamper-proof. No intermediaries. Fully transparent.</div>
+    </div>
+    <div class="hiw-card reveal">
+      <div class="hiw-num">04</div>
+      <div class="hiw-icon">💰</div>
+      <div class="hiw-title">Earn $WATT</div>
+      <div class="hiw-desc">$WATT tokens are automatically sent to your wallet. Trade, stake, spend, or convert to local currency instantly.</div>
+    </div>
+  </div>
+  <div class="hiw-link reveal">
+    <a href="how-it-works.html" class="btn btn-outline">Deep Dive — Full Technical Explainer →</a>
+  </div>
+</section>
+
+<!-- GLOBAL REGIONS -->
+<div class="map-strip">
+  <div class="map-strip-title">Global Expansion — Targeting 7 Regions at Launch</div>
+  <div class="map-regions">
+    <div class="map-region reveal">
+      <div class="mr-flag">🌍</div>
+      <div class="mr-name">Africa</div>
+      <div class="mr-status live">● Origin</div>
+    </div>
+    <div class="map-region reveal">
+      <div class="mr-flag">🌏</div>
+      <div class="mr-name">South Asia</div>
+      <div class="mr-status">● Phase 2</div>
+    </div>
+    <div class="map-region reveal">
+      <div class="mr-flag">🌎</div>
+      <div class="mr-name">Latin America</div>
+      <div class="mr-status">● Phase 2</div>
+    </div>
+    <div class="map-region reveal">
+      <div class="mr-flag">🌍</div>
+      <div class="mr-name">Middle East</div>
+      <div class="mr-status">● Phase 3</div>
+    </div>
+    <div class="map-region reveal">
+      <div class="mr-flag">🌏</div>
+      <div class="mr-name">Southeast Asia</div>
+      <div class="mr-status">● Phase 3</div>
+    </div>
+    <div class="map-region reveal">
+      <div class="mr-flag">🌍</div>
+      <div class="mr-name">Europe</div>
+      <div class="mr-status">● Phase 3</div>
+    </div>
+    <div class="map-region reveal">
+      <div class="mr-flag">🌎</div>
+      <div class="mr-name">North America</div>
+      <div class="mr-status">● Phase 4</div>
+    </div>
+  </div>
+</div>
+
+<!-- SDG COMMUNITY -->
+<section class="sdg-preview">
+  <div class="grid-texture"></div>
+  <div class="sdg-inner">
+    <div>
+      <div class="tag reveal">Community & SDGs</div>
+      <h2 class="section-title reveal">MORE THAN<br><span class="hl">A TOKEN.</span><br><span class="ol">A MISSION.</span></h2>
+      <p style="font-size:16px;line-height:1.85;color:var(--gray5);margin:28px 0;max-width:480px;" class="reveal">5% of all $WATT tokens — 50 million tokens — are permanently reserved for communities with zero access to clean water, electricity, and schools. Governed by the community. Recorded on-chain. Zero corruption possible.</p>
+      <div class="sdg-goals">
+        <div class="sdg-goal reveal">
+          <div class="sdg-icon">⚡</div>
+          <div><div class="sdg-num">SDG 7</div><div class="sdg-name">Affordable Clean Energy</div></div>
+        </div>
+        <div class="sdg-goal reveal">
+          <div class="sdg-icon">🎓</div>
+          <div><div class="sdg-num">SDG 4</div><div class="sdg-name">Quality Education</div></div>
+        </div>
+        <div class="sdg-goal reveal">
+          <div class="sdg-icon">💧</div>
+          <div><div class="sdg-num">SDG 6</div><div class="sdg-name">Clean Water Access</div></div>
+        </div>
+        <div class="sdg-goal reveal">
+          <div class="sdg-icon">🌍</div>
+          <div><div class="sdg-num">SDG 13</div><div class="sdg-name">Climate Action</div></div>
+        </div>
+      </div>
+      <div style="margin-top:32px;" class="reveal">
+        <a href="community.html" class="btn btn-primary">See Our Community Mission →</a>
+      </div>
+    </div>
+    <div class="sdg-visual reveal">
+      <div class="sdg-token-display">
+        <div class="sdg-token-pct">5%</div>
+        <div class="sdg-token-label">Of Total $WATT Supply</div>
+        <div class="sdg-token-amount">50,000,000 $WATT</div>
+        <div class="sdg-token-label" style="margin-top:8px;">Reserved for Communities in Need</div>
+        <div class="sdg-bars" style="margin-top:32px;">
+          <div class="sdg-bar-row">
+            <div class="sdg-bar-label">Clean Energy</div>
+            <div class="sdg-bar-track"><div class="sdg-bar-fill" style="width:40%"></div></div>
+          </div>
+          <div class="sdg-bar-row">
+            <div class="sdg-bar-label">Schools</div>
+            <div class="sdg-bar-track"><div class="sdg-bar-fill orange" style="width:30%"></div></div>
+          </div>
+          <div class="sdg-bar-row">
+            <div class="sdg-bar-label">Clean Water</div>
+            <div class="sdg-bar-track"><div class="sdg-bar-fill green" style="width:30%"></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- TOKEN PREVIEW -->
+<section class="token-preview">
+  <div style="display:flex;align-items:center;gap:24px;" class="reveal"><div class="tag" style="margin-bottom:0">Tokenomics</div><svg width="56" height="56" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg"><defs><radialGradient id="dSm" cx="38%" cy="30%" r="75%"><stop offset="0%" stop-color="#FFF8CC"/><stop offset="28%" stop-color="#F5C518"/><stop offset="62%" stop-color="#D4920E"/><stop offset="100%" stop-color="#8A5500"/></radialGradient><mask id="mSm"><rect width="128" height="128" fill="white"/><path d="M73 20 L48 64 H66 L58 108 L82 60 H65 Z" fill="black"/></mask></defs><circle cx="64" cy="64" r="64" fill="#070400"/><circle cx="64" cy="64" r="56" fill="url(#dSm)" mask="url(#mSm)"/><path d="M73 20 L48 64 H66 L58 108 L82 60 H65 Z" fill="#070400"/><circle cx="64" cy="64" r="62" stroke="#F5C518" stroke-width="1.5" stroke-opacity="0.35" fill="none"/></svg></div>
+  <h2 class="section-title reveal" style="margin-top:24px;">THE<br><span class="hl">$WATT</span><br>TOKEN</h2>
+  <div class="token-grid" style="margin-top:64px;">
+    <div class="token-card reveal">
+      <div class="tc-num">1B</div>
+      <div class="tc-label">Fixed Total Supply</div>
+    </div>
+    <div class="token-card reveal">
+      <div class="tc-num">60%</div>
+      <div class="tc-label">Earned by Users</div>
+    </div>
+    <div class="token-card reveal">
+      <div class="tc-num">0%</div>
+      <div class="tc-label">VC Presale</div>
+    </div>
+    <div class="token-card reveal">
+      <div class="tc-num">5%</div>
+      <div class="tc-label">Community Fund</div>
+    </div>
+  </div>
+  <div style="text-align:center;margin-top:48px;" class="reveal">
+    <a href="token.html" class="btn btn-outline">Full Tokenomics Breakdown →</a>
+  </div>
+</section>
+
+<!-- WAITLIST -->
+<section class="waitlist-section" id="waitlist">
+  <div class="waitlist-glow"></div>
+  <div class="tag reveal" style="justify-content:center;">Early Access</div>
+  <h2 class="waitlist-title reveal">BE<br><span style="color:var(--yellow)">FIRST.</span></h2>
+  <p class="waitlist-sub reveal">Early adopters receive bonus $WATT at launch. Join thousands of people worldwide building the clean energy economy.</p>
+  <form class="waitlist-form reveal">
+    <input type="email" placeholder="your@email.com" required>
+    <button type="submit">Join Now</button>
+  </form>
+  <div class="waitlist-success reveal">⚡ You're on the list. We'll be in touch soon.</div>
+  <p class="waitlist-note reveal">No spam · Early access + bonus $WATT at launch</p>
+</section>
+
+<script src="shared.js"></script>
+<script>
+  // Live data animation
+  function animateData() {
+    const kwh = (14 + Math.random()*2).toFixed(1);
+    const watts = Math.floor(220 + Math.random()*80);
+    document.getElementById('liveKwh').textContent = kwh;
+    document.getElementById('earnedToday').textContent = kwh + ' $W';
+    document.getElementById('liveWatts').textContent = watts + 'W';
+  }
+  setInterval(animateData, 3000);
+</script>
+</body>
+</html>
