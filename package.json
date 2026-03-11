@@ -1,0 +1,19 @@
+{
+  "name": "watt-protocol-waitlist",
+  "version": "1.0.0",
+  "description": "$WATT Protocol waitlist backend",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.99.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "nanoid": "^5.0.7",
+    "nodemailer": "^8.0.2"
+  }
+}

@@ -28,6 +28,7 @@
         <li><a href="community.html" ${path==='community.html'?'class="active"':''}>Community</a></li>
         <li><a href="whitepaper.html" ${path==='whitepaper.html'?'class="active"':''}>Whitepaper</a></li>
         <li><a href="about.html" ${path==='about.html'?'class="active"':''}>About</a></li>
+        <li><a href="dashboard.html" ${path==='dashboard.html'?'class="active"':''}>Dashboard</a></li>
         <li><a href="index.html#waitlist" class="nav-cta">Join Waitlist</a></li>
       </ul>
       <button class="nav-burger" id="navBurger" aria-label="Menu">
@@ -41,6 +42,7 @@
       <a href="community.html">Community & SDG</a>
       <a href="whitepaper.html">Whitepaper</a>
       <a href="about.html">About</a>
+      <a href="dashboard.html">Dashboard</a>
       <a href="index.html#waitlist" style="color:var(--yellow)">⚡ Join Waitlist</a>
     </div>
   `);

@@ -607,12 +607,12 @@
   <div class="tag reveal" style="justify-content:center;">Early Access</div>
   <h2 class="waitlist-title reveal">BE<br><span style="color:var(--yellow)">FIRST.</span></h2>
   <p class="waitlist-sub reveal">Early adopters receive bonus $WATT at launch. Join thousands of people worldwide building the clean energy economy.</p>
-  <form class="waitlist-form reveal">
-    <input type="email" placeholder="your@email.com" required>
-    <button type="submit">Join Now</button>
+  <form class="waitlist-form reveal" id="waitlistForm">
+    <input type="email" id="waitlistEmail" placeholder="your@email.com" required>
+    <button type="submit" id="waitlistBtn">Join Now</button>
   </form>
-  <div class="waitlist-success reveal">⚡ You're on the list. We'll be in touch soon.</div>
-  <p class="waitlist-note reveal">No spam · Early access + bonus $WATT at launch</p>
+  <div class="waitlist-success reveal" id="waitlistSuccess">⚡ You're on the list. Check your inbox — whitepaper on the way.</div>
+  <p class="waitlist-note reveal" id="waitlistNote">No spam · Early access + bonus $WATT at launch</p>
 </section>
 
 <script src="shared.js"></script>
@@ -626,6 +626,76 @@
     document.getElementById('liveWatts').textContent = watts + 'W';
   }
   setInterval(animateData, 3000);
+
+  // Pick up referral code from URL: wattprotocol.io/ref/CODE
+  // shared.js handles the /ref/ redirect and sets the cookie; we also read it here.
+  (function () {
+    const urlRef = new URLSearchParams(window.location.search).get('ref');
+    if (urlRef) {
+      document.cookie = `watt_ref=${urlRef};path=/;max-age=604800;SameSite=Lax`;
+    }
+  })();
+
+  function getRefCookie() {
+    return (document.cookie.split('; ').find(r => r.startsWith('watt_ref=')) || '').split('=')[1] || null;
+  }
+
+  // Waitlist form
+  (function () {
+    const form    = document.getElementById('waitlistForm');
+    const input   = document.getElementById('waitlistEmail');
+    const btn     = document.getElementById('waitlistBtn');
+    const note    = document.getElementById('waitlistNote');
+    const success = document.getElementById('waitlistSuccess');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const email = input.value.trim();
+      if (!email) return;
+
+      btn.textContent  = 'Joining...';
+      btn.disabled     = true;
+      input.disabled   = true;
+      note.style.color = '';
+
+      try {
+        const apiUrl = window.location.port === '3000' ? '/api/waitlist' : 'http://localhost:3000/api/waitlist';
+        const res    = await fetch(apiUrl, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ email, referredBy: getRefCookie() }),
+        });
+        const data = await res.json();
+
+        if (res.ok && data.success) {
+          // Redirect to personal dashboard after a short delay
+          form.style.display    = 'none';
+          success.style.display = 'block';
+          note.textContent      = '⚡ Redirecting to your dashboard...';
+          note.style.color      = 'var(--yellow)';
+          setTimeout(() => {
+            window.location.href = `dashboard.html?ref=${data.referralCode}`;
+          }, 1800);
+        } else if (res.status === 409) {
+          note.textContent = 'Already on the waitlist — check your email for your dashboard link.';
+          note.style.color = 'var(--yellow)';
+          btn.textContent  = 'Join Now';
+          btn.disabled     = false;
+          input.disabled   = false;
+        } else {
+          throw new Error(data.error || 'Something went wrong.');
+        }
+      } catch (err) {
+        note.textContent = err.message || 'Network error. Please try again.';
+        note.style.color = '#ff4444';
+        btn.textContent  = 'Try Again';
+        btn.disabled     = false;
+        input.disabled   = false;
+      }
+    });
+
+    input.addEventListener('focus', () => { input.style.borderColor = ''; });
+  })();
 </script>
 </body>
 </html>
