@@ -636,13 +636,20 @@ function renderDashboard(data) {
 (async function () {
   const params  = new URLSearchParams(window.location.search);
   const ref     = params.get('ref');
+  const email   = params.get('email');
   const loading = document.getElementById('dashboardLoading');
   const resend  = document.getElementById('dashboardResend');
 
   if (!ref) {
     loading.style.display = 'none';
     resend.style.display  = 'block';
-    document.getElementById('resendEmail').focus();
+    // Auto-lookup if email param is present (e.g. redirected from duplicate signup)
+    if (email) {
+      document.getElementById('resendEmail').value = decodeURIComponent(email);
+      lookupByEmail('resend');
+    } else {
+      document.getElementById('resendEmail').focus();
+    }
     return;
   }
 

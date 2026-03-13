@@ -202,6 +202,10 @@ app.post('/api/waitlist', async (req, res) => {
   const dashboardUrl  = `${siteUrl}/dashboard.html?ref=${referralCode}`;
   const foundingMember = (count || 0) < 1000;
 
+  // Sanitize referral code BEFORE insert so referred_by is stored consistently uppercase
+  const cleanRef = (referredBy || '').toUpperCase().trim().replace(/[^A-Z0-9]/g, '');
+  console.log(`[WATT] referredBy received: "${cleanRef || 'none'}"`);
+
   // Insert user
   const { error: insertError } = await supabase
     .from('waitlist_users')
@@ -209,7 +213,7 @@ app.post('/api/waitlist', async (req, res) => {
       email:           normalizedEmail,
       referral_code:   referralCode,
       referral_link:   referralLink,
-      referred_by:     referredBy || null,
+      referred_by:     cleanRef || null,
       founding_member: foundingMember,
     }]);
 
@@ -218,9 +222,7 @@ app.post('/api/waitlist', async (req, res) => {
     return res.status(500).json({ error: 'Could not save your signup. Please try again.' });
   }
 
-  // Increment referrer count
-  const cleanRef = (referredBy || '').toUpperCase().trim();
-  console.log(`[WATT] referredBy received: "${cleanRef || 'none'}"`);
+  // Increment referrer count (cache field — live count is used for display)
 
   if (cleanRef) {
     // Use raw SQL increment to avoid race conditions
@@ -306,11 +308,14 @@ app.get('/api/me', async (req, res) => {
     .from('waitlist_users')
     .select('*', { count: 'exact', head: true });
 
-  // Live referral count — always accurate, retroactively correct
-  const { count: referralsCount } = await supabase
+  // Live referral count — case-insensitive to handle any legacy data
+  const { count: referralsCount, error: countErr1 } = await supabase
     .from('waitlist_users')
     .select('*', { count: 'exact', head: true })
-    .eq('referred_by', user.referral_code);
+    .ilike('referred_by', user.referral_code);
+
+  if (countErr1) console.error('[WATT] /api/me referral count error:', countErr1.message);
+  console.log(`[WATT] /api/me referral count for code "${user.referral_code}": ${referralsCount}`);
 
   // Mask email: da***@gmail.com
   const [local, domain] = user.email.split('@');
@@ -356,11 +361,14 @@ app.post('/api/lookup', async (req, res) => {
     .from('waitlist_users')
     .select('*', { count: 'exact', head: true });
 
-  // Live referral count — always accurate, retroactively correct
-  const { count: referralsCount } = await supabase
+  // Live referral count — case-insensitive to handle any legacy data
+  const { count: referralsCount, error: countErr2 } = await supabase
     .from('waitlist_users')
     .select('*', { count: 'exact', head: true })
-    .eq('referred_by', user.referral_code);
+    .ilike('referred_by', user.referral_code);
+
+  if (countErr2) console.error('[WATT] /api/lookup referral count error:', countErr2.message);
+  console.log(`[WATT] /api/lookup referral count for code "${user.referral_code}": ${referralsCount}`);
 
   const [local, domain] = user.email.split('@');
   const maskedEmail = local.slice(0, 2) + '***@' + domain;

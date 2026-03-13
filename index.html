@@ -626,6 +626,30 @@
   </div>
 </section>
 
+<!-- DUPLICATE EMAIL MODAL -->
+<div id="existsModal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.75);backdrop-filter:blur(4px);align-items:center;justify-content:center;">
+  <div style="background:#0f0f0f;border:1px solid var(--border);max-width:420px;width:calc(100% - 40px);padding:40px 36px;position:relative;">
+    <!-- accent bar -->
+    <div style="position:absolute;top:0;left:0;width:4px;height:100%;background:var(--yellow);"></div>
+    <!-- close -->
+    <button onclick="document.getElementById('existsModal').style.display='none'"
+      style="position:absolute;top:16px;right:16px;background:none;border:none;color:var(--gray4);font-size:18px;line-height:1;cursor:pointer;">✕</button>
+
+    <p style="font-family:var(--font-mono);font-size:9px;letter-spacing:0.3em;text-transform:uppercase;color:var(--yellow);margin:0 0 12px;">Account Found</p>
+    <h3 style="font-size:22px;font-weight:700;margin:0 0 10px;color:var(--white);">You're already on<br>the waitlist ⚡</h3>
+    <p style="font-size:13px;color:var(--gray5);line-height:1.7;margin:0 0 28px;">An account for <strong id="existsEmailDisplay" style="color:var(--white);"></strong> already exists. Head to your dashboard to see your position, referrals, and earned $WATT.</p>
+
+    <button id="existsGoBtn" onclick="goToDashboard()"
+      style="width:100%;background:var(--yellow);color:var(--black);border:none;padding:15px 24px;font-family:var(--font-mono);font-size:11px;font-weight:700;letter-spacing:0.15em;text-transform:uppercase;cursor:pointer;transition:background 0.2s;">
+      View My Dashboard →
+    </button>
+    <button onclick="document.getElementById('existsModal').style.display='none'"
+      style="width:100%;background:none;border:1px solid var(--border);color:var(--gray4);padding:12px 24px;font-family:var(--font-mono);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;cursor:pointer;margin-top:10px;transition:border-color 0.2s,color 0.2s;">
+      Close
+    </button>
+  </div>
+</div>
+
 <!-- WAITLIST -->
 <section class="waitlist-section" id="waitlist">
   <div class="waitlist-glow"></div>
@@ -768,11 +792,15 @@
             window.location.href = `dashboard.html?ref=${data.referralCode}`;
           }, 1800);
         } else if (res.status === 409) {
-          note.textContent = 'Already on the waitlist — check your email for your dashboard link.';
-          note.style.color = 'var(--yellow)';
-          btn.textContent  = 'Join Now';
-          btn.disabled     = false;
-          input.disabled   = false;
+          // Show modal — account already exists
+          const email = input.value.trim();
+          document.getElementById('existsEmailDisplay').textContent = email;
+          document.getElementById('existsGoBtn').dataset.email = email;
+          const modal = document.getElementById('existsModal');
+          modal.style.display = 'flex';
+          btn.textContent = 'Join Now';
+          btn.disabled    = false;
+          input.disabled  = false;
         } else {
           throw new Error(data.error || 'Something went wrong.');
         }
@@ -787,6 +815,16 @@
 
     input.addEventListener('focus', () => { input.style.borderColor = ''; });
   })();
+
+  // Close modal on backdrop click
+  document.getElementById('existsModal').addEventListener('click', function(e) {
+    if (e.target === this) this.style.display = 'none';
+  });
+
+  function goToDashboard() {
+    const email = document.getElementById('existsGoBtn').dataset.email;
+    window.location.href = `dashboard.html?email=${encodeURIComponent(email)}`;
+  }
 </script>
 </body>
 </html>
