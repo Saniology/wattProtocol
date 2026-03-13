@@ -418,6 +418,14 @@ app.get('/api/announcement', async (req, res) => {
   return res.json({ announcement: cfg.announcement || '' });
 });
 
+// ── GET /api/roadmap — public, no auth required ────────────────────────────
+app.get('/api/roadmap', async (req, res) => {
+  const cfg = await getConfig();
+  let stages = [];
+  try { stages = JSON.parse(cfg.roadmap || '[]'); } catch {}
+  return res.json({ stages });
+});
+
 // ── POST /api/send-dashboard-link ─────────────────────────────────────────
 app.post('/api/send-dashboard-link', async (req, res) => {
   const { email } = req.body || {};

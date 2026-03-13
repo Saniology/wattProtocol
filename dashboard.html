@@ -444,62 +444,7 @@
     <!-- Roadmap -->
     <div class="roadmap-panel">
       <div class="roadmap-header"><span>Launch Roadmap — Where We Are</span></div>
-      <div class="roadmap-row">
-        <div class="rm-num done">✓</div>
-        <div class="rm-body">
-          <div class="rm-title">Foundation — Waitlist &amp; Community</div>
-          <div class="rm-desc">Global waitlist live. X launch. Co-founder search underway.</div>
-        </div>
-        <span class="rm-time" style="color:var(--green)">Now ✓</span>
-      </div>
-      <div class="roadmap-row">
-        <div class="rm-num now">02</div>
-        <div class="rm-body">
-          <div class="rm-title">Prototype — WATT Smart Meter + Base Testnet</div>
-          <div class="rm-desc">First WATT Meter built. Energy data committed on-chain every 15 min.</div>
-        </div>
-        <span class="rm-time">Month 3–4</span>
-      </div>
-      <div class="roadmap-row">
-        <div class="rm-num">03</div>
-        <div class="rm-body">
-          <div class="rm-title">Africa Pilot — Nigeria &amp; Ghana</div>
-          <div class="rm-desc">20–50 meters live. First $WATT tokens minted from real solar energy.</div>
-        </div>
-        <span class="rm-time">Month 5–6</span>
-      </div>
-      <div class="roadmap-row">
-        <div class="rm-num">04</div>
-        <div class="rm-body">
-          <div class="rm-title">Grant Funding</div>
-          <div class="rm-desc">Ethereum Foundation, World Bank, EU Horizon applications.</div>
-        </div>
-        <span class="rm-time">Month 6–9</span>
-      </div>
-      <div class="roadmap-row">
-        <div class="rm-num">05</div>
-        <div class="rm-body">
-          <div class="rm-title">Asia Expansion — India, Indonesia, Philippines</div>
-          <div class="rm-desc">Fastest growing solar markets globally. Regional pilots launch.</div>
-        </div>
-        <span class="rm-time">Month 9–15</span>
-      </div>
-      <div class="roadmap-row">
-        <div class="rm-num">06</div>
-        <div class="rm-body">
-          <div class="rm-title">Mainnet Launch — $WATT Live on Base + Uniswap</div>
-          <div class="rm-desc">$WATT tradeable globally. Carbon credit marketplace opens. Founding Member NFTs minted.</div>
-        </div>
-        <span class="rm-time">Month 12–18</span>
-      </div>
-      <div class="roadmap-row">
-        <div class="rm-num">07</div>
-        <div class="rm-body">
-          <div class="rm-title">Protocol Scale — 1M+ Active Meters Worldwide</div>
-          <div class="rm-desc">Series A ($5M–$20M). White-label licensing to national utilities.</div>
-        </div>
-        <span class="rm-time">Year 2–3</span>
-      </div>
+      <div id="roadmapRows"><!-- rendered by JS --></div>
     </div>
 
     <!-- Footer -->
@@ -536,6 +481,52 @@
 <script src="shared.js"></script>
 <script>
 const API = window.location.port === '3000' ? '' : 'http://localhost:3000';
+
+// ── Roadmap ───────────────────────────────────────────────────────────────
+const DEFAULT_ROADMAP = [
+  { title: 'Foundation — Waitlist & Community',            desc: 'Global waitlist live. X launch. Co-founder search underway.',                                    timeline: 'Now ✓',      status: 'done'     },
+  { title: 'Prototype — WATT Smart Meter + Base Testnet',  desc: 'First WATT Meter built. Energy data committed on-chain every 15 min.',                           timeline: 'Month 3–4',  status: 'current'  },
+  { title: 'Africa Pilot — Nigeria & Ghana',               desc: '20–50 meters live. First $WATT tokens minted from real solar energy.',                           timeline: 'Month 5–6',  status: 'upcoming' },
+  { title: 'Grant Funding',                                desc: 'Ethereum Foundation, World Bank, EU Horizon applications.',                                       timeline: 'Month 6–9',  status: 'upcoming' },
+  { title: 'Asia Expansion — India, Indonesia, Philippines',desc: 'Fastest growing solar markets globally. Regional pilots launch.',                               timeline: 'Month 9–15', status: 'upcoming' },
+  { title: 'Mainnet Launch — $WATT Live on Base + Uniswap',desc: '$WATT tradeable globally. Carbon credit marketplace opens. Founding Member NFTs minted.',        timeline: 'Month 12–18',status: 'upcoming' },
+  { title: 'Protocol Scale — 1M+ Active Meters Worldwide', desc: 'Series A ($5M–$20M). White-label licensing to national utilities.',                              timeline: 'Year 2–3',   status: 'upcoming' },
+];
+
+function escHtmlDb(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function renderDashboardRoadmap(stages) {
+  const container = document.getElementById('roadmapRows');
+  if (!container || !stages.length) return;
+  container.innerHTML = stages.map((s, i) => {
+    const numLabel  = s.status === 'done' ? '✓' : String(i + 1).padStart(2, '0');
+    const numClass  = s.status === 'done' ? 'done' : s.status === 'current' ? 'now' : '';
+    const timeColor = s.status === 'done' ? 'color:var(--green)' : s.status === 'current' ? 'color:var(--yellow)' : '';
+    return `
+      <div class="roadmap-row">
+        <div class="rm-num ${numClass}">${numLabel}</div>
+        <div class="rm-body">
+          <div class="rm-title">${escHtmlDb(s.title)}</div>
+          ${s.desc ? `<div class="rm-desc">${escHtmlDb(s.desc)}</div>` : ''}
+        </div>
+        <span class="rm-time" ${timeColor ? `style="${timeColor}"` : ''}>${escHtmlDb(s.timeline)}</span>
+      </div>`;
+  }).join('');
+}
+
+(async function loadRoadmap() {
+  try {
+    const r = await fetch(`${API}/api/roadmap`);
+    if (r.ok) {
+      const data = await r.json();
+      if (data.stages && data.stages.length) {
+        renderDashboardRoadmap(data.stages);
+        return;
+      }
+    }
+  } catch {}
+  renderDashboardRoadmap(DEFAULT_ROADMAP);
+})();
 
 // ── Populate all dashboard UI from a data object ──────────────────────────
 function renderDashboard(data) {

@@ -10,14 +10,31 @@
   // ── Announcement banner (fetched from server, shown on all pages) ──────
   const _apiBase = window.location.port === '3000' ? '' : 'http://localhost:3000';
   document.body.insertAdjacentHTML('afterbegin',
-    '<div id="watt-announcement" style="display:none;background:#f5e642;color:#080808;font-family:\'Courier New\',monospace;font-size:12px;font-weight:700;letter-spacing:0.08em;text-align:center;padding:10px 48px;position:relative;z-index:1001;"></div>'
+    '<div id="watt-announcement" style="display:none;background:#f5e642;color:#080808;font-family:\'Courier New\',monospace;font-size:12px;font-weight:700;letter-spacing:0.08em;text-align:center;padding:10px 48px;position:fixed;top:0;left:0;right:0;z-index:1001;"></div>'
   );
   fetch(`${_apiBase}/api/announcement`)
     .then(r => r.ok ? r.json() : null)
     .then(data => {
       if (data && data.announcement && data.announcement.trim()) {
         const el = document.getElementById('watt-announcement');
-        if (el) { el.textContent = data.announcement.trim(); el.style.display = 'block'; }
+        if (el) {
+          el.textContent = data.announcement.trim();
+          el.style.display = 'block';
+          // Push nav down so it sits below the banner
+          const bannerH = el.offsetHeight;
+          const nav = document.getElementById('watt-nav');
+          const mob = document.getElementById('navMobile');
+          if (nav) nav.style.top = bannerH + 'px';
+          if (mob) mob.style.top = (bannerH + 72) + 'px';
+          // Also add top padding to <body> so page content isn't hidden behind banner+nav
+          document.body.style.paddingTop = bannerH + 'px';
+        }
+        // Populate homepage announcement section if present
+        const strip = document.getElementById('announcement-strip');
+        if (strip && data.announcement && data.announcement.trim()) {
+          strip.querySelector('.announcement-strip-text').textContent = data.announcement.trim();
+          strip.style.display = 'flex';
+        }
       }
     })
     .catch(() => {/* server not running — silently ignore */});

@@ -122,6 +122,29 @@ body { background: var(--black); color: var(--white); font-family: 'Inter', syst
 /* ── Announcement banner ── */
 #announcementBanner { display: none; background: var(--yellow); color: var(--black); font-family: var(--mono); font-size: 12px; font-weight: 700; letter-spacing: 0.1em; text-align: center; padding: 10px 24px; }
 
+/* ── Roadmap editor ── */
+.rm-editor { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+.rm-stage-row { background: var(--gray2); border: 1px solid var(--border); padding: 16px 20px; display: grid; grid-template-columns: 110px 1fr auto; gap: 16px; align-items: start; transition: border-color 0.2s; }
+.rm-stage-row.is-current { border-color: var(--yellow); }
+.rm-stage-row.is-done { border-color: rgba(34,197,94,0.4); }
+.rm-status-col { display: flex; flex-direction: column; gap: 8px; }
+.rm-status-select { background: var(--gray1); border: 1px solid var(--border); color: var(--white); font-family: var(--mono); font-size: 10px; padding: 6px 8px; outline: none; cursor: pointer; width: 100%; transition: border-color 0.2s; }
+.rm-status-select:focus { border-color: var(--yellow); }
+.rm-status-badge { font-family: var(--mono); font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; text-align: center; padding: 4px 8px; }
+.rm-status-badge.done     { background: rgba(34,197,94,0.15); color: var(--green); border: 1px solid rgba(34,197,94,0.3); }
+.rm-status-badge.current  { background: rgba(245,230,66,0.15); color: var(--yellow); border: 1px solid rgba(245,230,66,0.3); }
+.rm-status-badge.upcoming { background: var(--gray3); color: var(--gray4); border: 1px solid var(--border); }
+.rm-fields { display: flex; flex-direction: column; gap: 8px; }
+.rm-field-row { display: grid; grid-template-columns: 1fr 160px; gap: 8px; }
+.rm-input { background: var(--gray1); border: 1px solid var(--border); color: var(--white); font-family: var(--mono); font-size: 12px; padding: 8px 12px; outline: none; width: 100%; transition: border-color 0.2s; }
+.rm-input:focus { border-color: var(--yellow); }
+.rm-textarea { background: var(--gray1); border: 1px solid var(--border); color: #ccc; font-family: 'Inter', sans-serif; font-size: 12px; padding: 8px 12px; outline: none; width: 100%; resize: vertical; min-height: 54px; line-height: 1.5; transition: border-color 0.2s; }
+.rm-textarea:focus { border-color: var(--yellow); }
+.rm-stage-actions { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
+.rm-empty { text-align: center; color: var(--gray4); font-family: var(--mono); font-size: 11px; padding: 28px; border: 1px dashed var(--border); }
+.rm-add-btn { background: none; border: 1px dashed var(--border); color: var(--gray4); font-family: var(--mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; padding: 13px; cursor: pointer; width: 100%; text-align: center; transition: all 0.15s; margin-bottom: 16px; }
+.rm-add-btn:hover { border-color: var(--yellow); color: var(--yellow); }
+
 @media (max-width: 900px) {
   .stats-grid { grid-template-columns: 1fr 1fr; }
   .two-col { grid-template-columns: 1fr; }
@@ -235,6 +258,19 @@ body { background: var(--black); color: var(--white); font-family: 'Inter', syst
     </div>
   </div>
 
+  <!-- Launch Roadmap Editor -->
+  <div class="section-title">Launch Roadmap</div>
+  <div class="panel" style="margin-bottom:32px">
+    <div id="rmList" class="rm-editor">
+      <div class="rm-empty">Loading roadmap…</div>
+    </div>
+    <button class="rm-add-btn" onclick="addRoadmapStage()">+ Add New Stage</button>
+    <div class="config-actions">
+      <button class="btn-save" onclick="saveRoadmap()">Save Roadmap</button>
+      <span id="roadmapMsg" class="config-msg"></span>
+    </div>
+  </div>
+
   <!-- User Management -->
   <div class="section-title">Member Management</div>
   <div class="panel">
@@ -300,6 +336,7 @@ let totalPages   = 1;
 let totalUsers   = 0;
 let searchTimer  = null;
 let currentReward = 500;
+let roadmapStages = [];
 
 // ── Boot ──────────────────────────────────────────────────────────────────
 (async function init() {
@@ -333,6 +370,10 @@ async function loadStats() {
     document.getElementById('cfgThreshold').value     = cfg.founding_member_threshold  || 1000;
     document.getElementById('cfgMultiplier').value    = cfg.founding_member_multiplier || 1.5;
     document.getElementById('cfgAnnouncement').value  = cfg.announcement               || '';
+
+    // Load roadmap
+    try { roadmapStages = JSON.parse(cfg.roadmap || '[]'); } catch { roadmapStages = []; }
+    renderRoadmap();
 
     // Announcement banner
     if (cfg.announcement) {
@@ -574,6 +615,111 @@ function fmtDate(iso) {
   if (!iso) return '—';
   const d = new Date(iso);
   return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function escHtml(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Roadmap editor ────────────────────────────────────────────────────────
+function renderRoadmap() {
+  const list = document.getElementById('rmList');
+  if (!roadmapStages.length) {
+    list.innerHTML = '<div class="rm-empty">No stages yet. Click "+ Add New Stage" to build your roadmap.</div>';
+    return;
+  }
+  const statusLabel = { done: '✓ Done', current: '▶ Current', upcoming: 'Upcoming' };
+  list.innerHTML = roadmapStages.map((s, i) => `
+    <div class="rm-stage-row ${s.status === 'current' ? 'is-current' : s.status === 'done' ? 'is-done' : ''}">
+      <div class="rm-status-col">
+        <div class="rm-status-badge ${s.status}">${statusLabel[s.status] || s.status}</div>
+        <select class="rm-status-select" data-idx="${i}">
+          <option value="upcoming" ${s.status==='upcoming'?'selected':''}>Upcoming</option>
+          <option value="current"  ${s.status==='current' ?'selected':''}>▶ Current</option>
+          <option value="done"     ${s.status==='done'    ?'selected':''}>✓ Done</option>
+        </select>
+        <button class="action-btn" style="font-size:9px;width:100%;text-align:center" onclick="setCurrentStage(${i})">Set Current</button>
+      </div>
+      <div class="rm-fields">
+        <input  class="rm-input"    data-idx="${i}" data-field="title"    value="${escHtml(s.title    || '')}" placeholder="Stage title…" style="font-weight:600">
+        <textarea class="rm-textarea" data-idx="${i}" data-field="desc"   placeholder="Short description…" rows="2">${escHtml(s.desc || '')}</textarea>
+        <input  class="rm-input"    data-idx="${i}" data-field="timeline" value="${escHtml(s.timeline || '')}" placeholder="Timeline (e.g. Month 3–4)" style="color:var(--gray5);font-size:11px">
+      </div>
+      <div class="rm-stage-actions">
+        <button class="action-btn danger" onclick="deleteRoadmapStage(${i})">Delete</button>
+        ${i > 0                          ? `<button class="action-btn" onclick="moveStage(${i},-1)" title="Move up">↑</button>`   : ''}
+        ${i < roadmapStages.length - 1   ? `<button class="action-btn" onclick="moveStage(${i}, 1)" title="Move down">↓</button>` : ''}
+      </div>
+    </div>
+  `).join('');
+}
+
+function collectRoadmapFromDom() {
+  roadmapStages = roadmapStages.map((s, i) => ({
+    title:    document.querySelector(`.rm-input[data-idx="${i}"][data-field="title"]`)?.value    ?? s.title,
+    desc:     document.querySelector(`.rm-textarea[data-idx="${i}"][data-field="desc"]`)?.value  ?? s.desc,
+    timeline: document.querySelector(`.rm-input[data-idx="${i}"][data-field="timeline"]`)?.value ?? s.timeline,
+    status:   document.querySelector(`.rm-status-select[data-idx="${i}"]`)?.value               ?? s.status,
+  }));
+}
+
+function setCurrentStage(idx) {
+  collectRoadmapFromDom();
+  roadmapStages = roadmapStages.map((s, i) => ({
+    ...s, status: i < idx ? 'done' : i === idx ? 'current' : 'upcoming',
+  }));
+  renderRoadmap();
+}
+
+function addRoadmapStage() {
+  collectRoadmapFromDom();
+  roadmapStages.push({ title: '', desc: '', timeline: '', status: 'upcoming' });
+  renderRoadmap();
+  // Scroll the new row into view
+  const rows = document.querySelectorAll('.rm-stage-row');
+  if (rows.length) rows[rows.length - 1].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function deleteRoadmapStage(i) {
+  if (!confirm('Delete this roadmap stage?')) return;
+  collectRoadmapFromDom();
+  roadmapStages.splice(i, 1);
+  renderRoadmap();
+}
+
+function moveStage(i, dir) {
+  collectRoadmapFromDom();
+  const j = i + dir;
+  if (j < 0 || j >= roadmapStages.length) return;
+  [roadmapStages[i], roadmapStages[j]] = [roadmapStages[j], roadmapStages[i]];
+  renderRoadmap();
+}
+
+async function saveRoadmap() {
+  collectRoadmapFromDom();
+  const msg = document.getElementById('roadmapMsg');
+  msg.textContent = '';
+  try {
+    const res = await fetch(`${API}/api/admin/config`, {
+      method:  'PUT',
+      headers: authHeaders(),
+      body:    JSON.stringify({ roadmap: JSON.stringify(roadmapStages) }),
+    });
+    if (res.status === 401) return logout();
+    const data = await res.json();
+    if (data.success) {
+      msg.textContent = '✓ Roadmap saved';
+      msg.style.color = 'var(--green)';
+      renderRoadmap(); // re-render to update status badges
+      setTimeout(() => { msg.textContent = ''; }, 3000);
+    } else {
+      msg.textContent = data.error || 'Save failed.';
+      msg.style.color = 'var(--red)';
+    }
+  } catch (e) {
+    msg.textContent = 'Network error.';
+    msg.style.color = 'var(--red)';
+  }
 }
 </script>
 </body>
