@@ -216,6 +216,23 @@ body { background: var(--black); color: var(--white); font-family: 'Inter', syst
     </div>
   </div>
 
+  <!-- Page Views Analytics -->
+  <div class="section-title">Page Views</div>
+  <div class="panel" style="margin-bottom:32px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px;">
+      <span style="font-family:var(--mono);font-size:11px;color:var(--gray4)">All-time views per page</span>
+      <button class="page-btn" onclick="loadPageViews()" style="font-size:9px;padding:6px 12px;">↺ Refresh</button>
+    </div>
+    <table class="mini-table">
+      <thead><tr>
+        <th>Page</th>
+        <th style="text-align:right">Views</th>
+        <th style="text-align:right">Last Visit</th>
+      </tr></thead>
+      <tbody id="pvBody"><tr><td colspan="3" style="color:var(--gray4);text-align:center;padding:20px">Loading...</td></tr></tbody>
+    </table>
+  </div>
+
   <!-- Recent + Top Referrers -->
   <div class="two-col">
     <div class="panel">
@@ -377,7 +394,7 @@ let roadmapStages = [];
 
 // ── Boot ──────────────────────────────────────────────────────────────────
 (async function init() {
-  await Promise.all([ loadStats(), loadUsers(), loadChart(14) ]);
+  await Promise.all([ loadStats(), loadUsers(), loadChart(14), loadPageViews() ]);
 })();
 
 // ── Stats ─────────────────────────────────────────────────────────────────
@@ -660,6 +677,30 @@ function escHtml(s) {
 }
 
 // ── Signup trend chart ────────────────────────────────────────────────────
+// ── Page Views ─────────────────────────────────────────────────────────────
+async function loadPageViews() {
+  try {
+    const res  = await fetch(`${API}/api/admin/pageviews`, { headers: authHeaders() });
+    if (res.status === 401) return;
+    const { pages } = await res.json();
+    const tbody = document.getElementById('pvBody');
+    if (!pages || !pages.length) {
+      tbody.innerHTML = '<tr><td colspan="3" style="color:var(--gray4);text-align:center;padding:20px">No page views yet</td></tr>';
+      return;
+    }
+    tbody.innerHTML = pages.map(p => {
+      const d   = new Date(p.updated_at);
+      const ago = d.toLocaleDateString('en', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      const pageLabel = p.page.replace('.html', '').replace('index', 'home') || 'home';
+      return `<tr>
+        <td style="font-family:var(--mono);font-size:11px;color:var(--fg)">${pageLabel}</td>
+        <td style="text-align:right;font-family:var(--mono);font-size:13px;color:var(--yellow)">${(p.views||0).toLocaleString()}</td>
+        <td style="text-align:right;font-size:11px;color:var(--gray4)">${ago}</td>
+      </tr>`;
+    }).join('');
+  } catch { /* silently ignore */ }
+}
+
 let _chart = null;
 
 async function loadChart(days = 14) {

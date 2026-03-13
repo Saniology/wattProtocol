@@ -5,6 +5,7 @@
 
 import 'dotenv/config';
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 import nodemailer from 'nodemailer';
 import { nanoid } from 'nanoid';
 import fs from 'fs';
@@ -59,6 +60,42 @@ app.use((req, res, next) => {
 });
 
 app.use(express.json());
+
+// ── Rate limiting ──────────────────────────────────────────────────────────
+// Waitlist signup: max 5 attempts per IP per 15 minutes
+const waitlistLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many signup attempts. Please try again in 15 minutes.' },
+});
+
+// Lookup / dashboard: max 20 per IP per 10 minutes
+const lookupLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests. Please slow down.' },
+});
+
+// Admin login: max 10 attempts per IP per hour
+const adminLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many admin attempts. Try again in an hour.' },
+});
+
+// Service worker must never be cached by the browser (so updates are detected immediately)
+app.get('/sw.js', (_req, res) => {
+  res.sendFile(path.join(__dirname, 'sw.js'), {
+    headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Content-Type': 'application/javascript' },
+  });
+});
+
 app.use(express.static(__dirname));
 
 // ── SMTP transporter ───────────────────────────────────────────────────────
@@ -180,6 +217,59 @@ function buildMagicLinkHtml(dashboardUrl) {
 </body></html>`;
 }
 
+function buildVerificationEmail(verifyUrl) {
+  const siteUrl = process.env.SITE_URL || 'https://wattprotocol.io';
+  return `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>⚡ Confirm your $WATT spot</title></head>
+<body style="margin:0;padding:0;background:#080808;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;color:#fff;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#080808;padding:40px 16px;">
+<tr><td align="center">
+<table role="presentation" width="520" cellpadding="0" cellspacing="0" style="max-width:520px;width:100%;">
+  <tr><td>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+      <tr>
+        <td style="width:4px;background:#f5e642;">&nbsp;</td>
+        <td style="background:#0f0f0f;padding:14px 24px;">
+          <span style="font-family:'Courier New',monospace;font-size:11px;font-weight:700;color:#f5e642;letter-spacing:0.18em;">$WATT PROTOCOL</span>
+        </td>
+      </tr>
+    </table>
+  </td></tr>
+  <tr><td>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+      <tr>
+        <td style="width:4px;background:#f5e642;">&nbsp;</td>
+        <td style="background:#0e0e00;padding:48px 40px 40px;">
+          <p style="font-family:'Courier New',monospace;font-size:10px;letter-spacing:0.35em;color:#f5e642;text-transform:uppercase;margin:0 0 14px;">ONE STEP TO GO</p>
+          <h1 style="font-size:28px;font-weight:700;line-height:1.2;margin:0 0 20px;">Confirm your<br><span style="color:#f5e642;">$WATT spot.</span></h1>
+          <p style="font-size:15px;color:#888;line-height:1.8;margin:0 0 32px;">Click the button below to confirm your email and secure your place on the $WATT Protocol waitlist. This link expires in 24 hours.</p>
+          <a href="${verifyUrl}" style="display:inline-block;background:#f5e642;color:#080808;font-family:'Courier New',monospace;font-size:12px;font-weight:700;letter-spacing:0.15em;text-transform:uppercase;padding:16px 36px;text-decoration:none;">⚡ CONFIRM MY SPOT →</a>
+          <p style="font-size:12px;color:#444;line-height:1.7;margin:32px 0 0;">Or copy this URL into your browser:<br><span style="color:#f5e642;word-break:break-all;">${verifyUrl}</span></p>
+        </td>
+      </tr>
+    </table>
+  </td></tr>
+  <tr><td>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+      <tr>
+        <td style="width:4px;background:#f5e642;">&nbsp;</td>
+        <td style="background:#080808;padding:20px 40px;">
+          <p style="font-size:10px;color:#2a2a2a;line-height:1.75;margin:0;">
+            If you didn't sign up for $WATT Protocol, ignore this email.<br>
+            <a href="${siteUrl}" style="color:#3a3a3a;">wattprotocol.io</a>
+          </p>
+        </td>
+      </tr>
+    </table>
+  </td></tr>
+</table>
+</td></tr>
+</table>
+</body></html>`;
+}
+
 // ── GET /ref/:code — referral link redirect ────────────────────────────────
 app.get('/ref/:code', (req, res) => {
   const code = (req.params.code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -190,7 +280,7 @@ app.get('/ref/:code', (req, res) => {
 });
 
 // ── POST /api/waitlist ─────────────────────────────────────────────────────
-app.post('/api/waitlist', async (req, res) => {
+app.post('/api/waitlist', waitlistLimiter, async (req, res) => {
   const { email, referredBy } = req.body || {};
 
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -229,15 +319,21 @@ app.post('/api/waitlist', async (req, res) => {
   const cleanRef = (referredBy || '').toUpperCase().trim().replace(/[^A-Z0-9]/g, '');
   console.log(`[WATT] referredBy received: "${cleanRef || 'none'}"`);
 
-  // Insert user
+  // Generate email verification token
+  const verificationToken = nanoid(32);
+  const verifyUrl = `${siteUrl}/verify-email?token=${verificationToken}`;
+
+  // Insert user (unverified — awaiting email confirmation)
   const { error: insertError } = await supabase
     .from('waitlist_users')
     .insert([{
-      email:           normalizedEmail,
-      referral_code:   referralCode,
-      referral_link:   referralLink,
-      referred_by:     cleanRef || null,
-      founding_member: foundingMember,
+      email:              normalizedEmail,
+      referral_code:      referralCode,
+      referral_link:      referralLink,
+      referred_by:        cleanRef || null,
+      founding_member:    foundingMember,
+      email_verified:     false,
+      verification_token: verificationToken,
     }]);
 
   if (insertError) {
@@ -271,20 +367,67 @@ app.post('/api/waitlist', async (req, res) => {
     }
   }
 
-  // Load PDF
+  // Send verification email (welcome email is sent after they click the link)
+  try {
+    await transporter.sendMail({
+      from:    `"${process.env.FROM_NAME || '$WATT Protocol'}" <${process.env.FROM_EMAIL || process.env.SMTP_USER}>`,
+      to:      normalizedEmail,
+      subject: '⚡ Confirm your $WATT spot — one click to go',
+      html:    buildVerificationEmail(verifyUrl),
+      text:    `Confirm your $WATT Protocol waitlist spot:\n\n${verifyUrl}\n\nThis link expires in 24 hours.`,
+    });
+    console.log(`[WATT] ✓ Verification email sent: ${normalizedEmail}`);
+  } catch (err) {
+    console.error('[WATT] Verification email send error:', err.message);
+  }
+
+  return res.status(200).json({ success: true, requiresVerification: true });
+});
+
+// ── GET /verify-email?token=xxx ────────────────────────────────────────────
+app.get('/verify-email', async (req, res) => {
+  const token   = (req.query.token || '').trim();
+  const siteUrl = process.env.SITE_URL || 'https://wattprotocol.io';
+
+  if (!token) return res.redirect('/?error=invalid-token');
+
+  const { data: user, error } = await supabase
+    .from('waitlist_users')
+    .select('id, email, referral_code, referral_link, founding_member, email_verified')
+    .eq('verification_token', token)
+    .maybeSingle();
+
+  if (error || !user) {
+    return res.send(`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Invalid Link — $WATT</title><style>body{margin:0;background:#080808;color:#fff;font-family:'Inter',system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px}.box{max-width:420px;text-align:center}h2{color:#ef4444;margin-bottom:12px}p{color:#888;font-size:14px;line-height:1.7}a{color:#f5e642}</style></head><body><div class="box"><h2>Invalid or Expired Link</h2><p>This verification link has already been used or has expired.<br><a href="${siteUrl}">← Back to $WATT Protocol</a></p></div></body></html>`);
+  }
+
+  // Already verified — just redirect to dashboard
+  if (user.email_verified) {
+    return res.redirect(`${siteUrl}/dashboard.html?ref=${user.referral_code}`);
+  }
+
+  // Mark verified and clear token
+  await supabase
+    .from('waitlist_users')
+    .update({ email_verified: true, verification_token: null })
+    .eq('id', user.id);
+
+  const dashboardUrl = `${siteUrl}/dashboard.html?ref=${user.referral_code}`;
+  const referralLink = user.referral_link;
+
+  // Now send the full welcome email
   const pdfPath = path.join(__dirname, 'watt-protocol-whitepaper.pdf');
   let pdfContent;
   try { pdfContent = fs.readFileSync(pdfPath).toString('base64'); }
-  catch { console.warn('[WATT] Whitepaper PDF not found'); }
+  catch { /* PDF not found — send without attachment */ }
 
   const mailOptions = {
     from:    `"${process.env.FROM_NAME || '$WATT Protocol'}" <${process.env.FROM_EMAIL || process.env.SMTP_USER}>`,
-    to:      normalizedEmail,
+    to:      user.email,
     subject: "⚡ You're in — $WATT Protocol. Energy to Earn.",
-    html:    buildHtmlEmail(referralCode, referralLink, dashboardUrl),
+    html:    buildHtmlEmail(user.referral_code, referralLink, dashboardUrl),
     text:    buildPlainText(referralLink, dashboardUrl),
   };
-
   if (pdfContent) {
     mailOptions.attachments = [{
       filename:    'WATT-Protocol-Whitepaper-2025.pdf',
@@ -296,16 +439,17 @@ app.post('/api/waitlist', async (req, res) => {
 
   try {
     await transporter.sendMail(mailOptions);
-    console.log(`[WATT] ✓ Signup: ${normalizedEmail} | ref:${referralCode} | founding:${foundingMember}`);
+    console.log(`[WATT] ✓ Verified + welcome email sent: ${user.email} | ref:${user.referral_code}`);
   } catch (err) {
-    console.error('[WATT] Email send error:', err.message);
+    console.error('[WATT] Welcome email error after verify:', err.message);
   }
 
-  return res.status(200).json({ success: true, referralCode, dashboardUrl });
+  // Redirect to dashboard
+  return res.redirect(dashboardUrl);
 });
 
 // ── GET /api/me?ref=CODE — dashboard data ─────────────────────────────────
-app.get('/api/me', async (req, res) => {
+app.get('/api/me', lookupLimiter, async (req, res) => {
   const ref = (req.query.ref || '').toUpperCase().trim();
   if (!ref) return res.status(400).json({ error: 'Referral code required.' });
 
@@ -352,7 +496,7 @@ app.get('/api/me', async (req, res) => {
 });
 
 // ── POST /api/lookup — find user by email ─────────────────────────────────
-app.post('/api/lookup', async (req, res) => {
+app.post('/api/lookup', adminLimiter, lookupLimiter, async (req, res) => {
   const { email } = req.body || {};
 
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -410,6 +554,62 @@ app.post('/api/lookup', async (req, res) => {
     multiplier:       user.founding_member ? foundingMultiplier : 1,
     wattEarned:       (referralsCount || 0) * referralReward,
   });
+});
+
+// ── GET /api/leaderboard — top 10 referrers (emails masked) ───────────────
+app.get('/api/leaderboard', async (req, res) => {
+  // Count live referrals per referral_code by querying referred_by column
+  const { data, error } = await supabase
+    .from('waitlist_users')
+    .select('referral_code, referred_by, founding_member')
+    .not('referred_by', 'is', null);
+
+  if (error) return res.status(500).json({ error: error.message });
+
+  // Build counts map
+  const counts = {};
+  (data || []).forEach(row => {
+    const code = (row.referred_by || '').toUpperCase();
+    if (code) counts[code] = (counts[code] || 0) + 1;
+  });
+
+  // Get top 10 codes
+  const topCodes = Object.entries(counts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([code, count]) => ({ code, count }));
+
+  if (!topCodes.length) return res.json({ leaders: [] });
+
+  // Look up emails for these codes (masked for privacy)
+  const { data: users } = await supabase
+    .from('waitlist_users')
+    .select('referral_code, email, founding_member')
+    .in('referral_code', topCodes.map(t => t.code));
+
+  const userMap = {};
+  (users || []).forEach(u => { userMap[u.referral_code] = u; });
+
+  const cfg = await getConfig();
+  const referralReward = parseInt(cfg.referral_reward_watt) || 500;
+
+  const leaders = topCodes.map((t, i) => {
+    const u = userMap[t.code] || {};
+    const [local = '', domain = ''] = (u.email || '').split('@');
+    const masked = local.length > 2
+      ? local.slice(0, 2) + '***@' + domain
+      : '***@' + domain;
+    return {
+      rank:          i + 1,
+      maskedEmail:   masked,
+      referralCode:  t.code,
+      referrals:     t.count,
+      wattEarned:    t.count * referralReward,
+      foundingMember: u.founding_member || false,
+    };
+  });
+
+  return res.json({ leaders });
 });
 
 // ── GET /api/stats — public, no auth required ─────────────────────────────
@@ -493,6 +693,36 @@ app.post('/api/send-dashboard-link', async (req, res) => {
   }
 
   return res.json({ success: true });
+});
+
+// ── POST /api/pageview — lightweight privacy-first page analytics ──────────
+app.post('/api/pageview', async (req, res) => {
+  const page = (req.body?.page || '').slice(0, 120).replace(/[^a-zA-Z0-9/_.-]/g, '');
+  if (!page) return res.sendStatus(204);
+
+  // Upsert: increment views for this page
+  try {
+    const { error } = await supabase.rpc('increment_page_view', { p_page: page });
+    if (error) {
+      // Fallback if RPC not created yet — direct upsert (less atomic but safe)
+      await supabase.from('page_views')
+        .upsert({ page, views: 1, updated_at: new Date().toISOString() }, { onConflict: 'page' });
+    }
+  } catch { /* ignore analytics errors — never crash the server */ }
+
+  return res.sendStatus(204);
+});
+
+// ── GET /api/admin/pageviews — top pages by views ─────────────────────────
+app.get('/api/admin/pageviews', requireAdmin, async (req, res) => {
+  const { data, error } = await supabase
+    .from('page_views')
+    .select('page, views, updated_at')
+    .order('views', { ascending: false })
+    .limit(20);
+
+  if (error) return res.status(500).json({ error: error.message });
+  return res.json({ pages: data || [] });
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -661,6 +891,13 @@ app.get('/api/admin/export', requireAdmin, async (req, res) => {
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', `attachment; filename="watt-waitlist-${new Date().toISOString().slice(0,10)}.csv"`);
   return res.send(csv);
+});
+
+// ── /og-image.png — serve SVG OG image (Discord/Slack/Twitter parse SVG fine) ──
+app.get('/og-image.png', (_req, res) => {
+  res.sendFile(path.join(__dirname, 'og-image.svg'), {
+    headers: { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'public, max-age=86400' },
+  });
 });
 
 // ── /favicon.ico — serve the SVG favicon (stops browser 404 noise) ────────

@@ -9,6 +9,13 @@
 
   // ── Announcement banner (fetched from server, shown on all pages) ──────
   const _apiBase = window.location.port === '3000' ? '' : 'http://localhost:3000';
+
+  // ── Privacy-first page view tracker (no cookies, no fingerprinting) ──────
+  fetch(`${_apiBase}/api/pageview`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ page: path || 'index.html' }),
+  }).catch(() => {/* silently ignore */});
   document.body.insertAdjacentHTML('afterbegin',
     '<div id="watt-announcement" style="display:none;background:#f5e642;color:#080808;font-family:\'Courier New\',monospace;font-size:12px;font-weight:700;letter-spacing:0.08em;text-align:center;padding:10px 48px;position:fixed;top:0;left:0;right:0;z-index:1001;"></div>'
   );
@@ -61,7 +68,9 @@
         <li><a href="whitepaper.html" ${path==='whitepaper.html'?'class="active"':''}>Whitepaper</a></li>
         <li><a href="about.html" ${path==='about.html'?'class="active"':''}>About</a></li>
         <li><a href="dashboard.html" ${path==='dashboard.html'?'class="active"':''}>Dashboard</a></li>
+        <li><a href="leaderboard.html" ${path==='leaderboard.html'?'class="active"':''}>Leaderboard</a></li>
         <li><a href="index.html#waitlist" class="nav-cta">Join Waitlist</a></li>
+        <li><button id="pwa-install-btn" style="display:none;background:none;border:1px solid var(--yellow);color:var(--yellow);font-family:'Courier New',monospace;font-size:10px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;padding:8px 14px;cursor:pointer;transition:background 0.2s,color 0.2s;" title="Install $WATT as an app">⬇ Install App</button></li>
       </ul>
       <button class="nav-burger" id="navBurger" aria-label="Menu">
         <span></span><span></span><span></span>
@@ -75,7 +84,9 @@
       <a href="whitepaper.html">Whitepaper</a>
       <a href="about.html">About</a>
       <a href="dashboard.html">Dashboard</a>
+      <a href="leaderboard.html">Leaderboard</a>
       <a href="index.html#waitlist" style="color:var(--yellow)">⚡ Join Waitlist</a>
+      <button id="pwa-install-btn-mobile" style="display:none;background:none;border:1px solid var(--yellow);color:var(--yellow);font-family:'Courier New',monospace;font-size:10px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;padding:12px 20px;cursor:pointer;width:100%;margin-top:8px;">⬇ Install App</button>
     </div>
   `);
 
@@ -87,12 +98,12 @@
           <div class="footer-brand-logo" style="display:flex;align-items:center;gap:12px;"><svg width="40" height="40" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg"><defs><radialGradient id="dFt" cx="38%" cy="30%" r="75%"><stop offset="0%" stop-color="#FFF8CC"/><stop offset="28%" stop-color="#F5C518"/><stop offset="62%" stop-color="#D4920E"/><stop offset="100%" stop-color="#8A5500"/></radialGradient><mask id="mFt"><rect width="128" height="128" fill="white"/><path d="M73 20 L48 64 H66 L58 108 L82 60 H65 Z" fill="black"/></mask></defs><circle cx="64" cy="64" r="64" fill="#070400"/><circle cx="64" cy="64" r="56" fill="url(#dFt)" mask="url(#mFt)"/><path d="M73 20 L48 64 H66 L58 108 L82 60 H65 Z" fill="#070400"/><circle cx="64" cy="64" r="62" stroke="#F5C518" stroke-width="1.5" stroke-opacity="0.35" fill="none"/></svg><span>$WATT</span></div>
           <p class="footer-brand-desc">A decentralized protocol rewarding individuals worldwide for generating renewable energy. Born in Africa. Built for the World.</p>
           <div class="footer-socials">
-            <a class="footer-social" href="#" title="X / Twitter">𝕏</a>
-            <a class="footer-social" href="#" title="Telegram">✈</a>
-            <a class="footer-social" href="#" title="Discord">◈</a>
-            <a class="footer-social" href="#" title="LinkedIn">in</a>
-            <a class="footer-social" href="#" title="Instagram">◻</a>
-            <a class="footer-social" href="#" title="YouTube">▶</a>
+            <a class="footer-social" href="https://x.com/wattprotocol" target="_blank" rel="noopener" title="X / Twitter">𝕏</a>
+            <a class="footer-social" href="https://t.me/wattprotocol" target="_blank" rel="noopener" title="Telegram">✈</a>
+            <a class="footer-social" href="https://discord.gg/wattprotocol" target="_blank" rel="noopener" title="Discord">◈</a>
+            <a class="footer-social" href="https://linkedin.com/company/wattprotocol" target="_blank" rel="noopener" title="LinkedIn">in</a>
+            <a class="footer-social" href="https://instagram.com/wattprotocol" target="_blank" rel="noopener" title="Instagram">◻</a>
+            <a class="footer-social" href="https://youtube.com/@wattprotocol" target="_blank" rel="noopener" title="YouTube">▶</a>
           </div>
         </div>
         <div class="footer-col">
@@ -334,3 +345,93 @@
   document.getElementById('watt-consent-accept').addEventListener('click', () => dismiss(true));
   document.getElementById('watt-consent-decline').addEventListener('click', () => dismiss(false));
 })();
+
+/* ═══════════════════════════════════════════════════════
+   PWA INSTALL PROMPT
+   Shows "Install App" button in nav when browser fires
+   beforeinstallprompt (Chrome desktop + Android)
+   ═══════════════════════════════════════════════════════ */
+(function() {
+  let _deferredPrompt = null;
+
+  const showBtn = () => {
+    const btn  = document.getElementById('pwa-install-btn');
+    const btnM = document.getElementById('pwa-install-btn-mobile');
+    if (btn)  { btn.style.display  = 'block'; btn.style.removeProperty('display');  btn.style.display = 'inline-block'; }
+    if (btnM) { btnM.style.display = 'block'; }
+  };
+
+  const hideBtn = () => {
+    const btn  = document.getElementById('pwa-install-btn');
+    const btnM = document.getElementById('pwa-install-btn-mobile');
+    if (btn)  btn.style.display  = 'none';
+    if (btnM) btnM.style.display = 'none';
+  };
+
+  const triggerInstall = async () => {
+    if (!_deferredPrompt) return;
+    _deferredPrompt.prompt();
+    const { outcome } = await _deferredPrompt.userChoice;
+    _deferredPrompt = null;
+    hideBtn();
+    if (outcome === 'accepted' && typeof window.wattToast === 'function') {
+      window.wattToast('$WATT installed! Find it in your apps.', 'success');
+    }
+  };
+
+  // Chrome fires this when the app meets installability criteria
+  window.addEventListener('beforeinstallprompt', e => {
+    e.preventDefault(); // prevent the mini-infobar on mobile
+    _deferredPrompt = e;
+    showBtn();
+  });
+
+  // If already installed, hide the button
+  window.addEventListener('appinstalled', () => {
+    _deferredPrompt = null;
+    hideBtn();
+    if (typeof window.wattToast === 'function') {
+      window.wattToast('$WATT is already installed!', 'info');
+    }
+  });
+
+  // Wire up buttons — wait for DOM to be ready
+  document.addEventListener('DOMContentLoaded', () => {
+    const btn  = document.getElementById('pwa-install-btn');
+    const btnM = document.getElementById('pwa-install-btn-mobile');
+    if (btn)  btn.addEventListener('click', triggerInstall);
+    if (btnM) btnM.addEventListener('click', triggerInstall);
+
+    // Hover style for desktop button
+    if (btn) {
+      btn.addEventListener('mouseenter', () => { btn.style.background = 'var(--yellow)'; btn.style.color = 'var(--black)'; });
+      btn.addEventListener('mouseleave', () => { btn.style.background = 'none'; btn.style.color = 'var(--yellow)'; });
+    }
+  });
+})();
+
+/* ═══════════════════════════════════════════════════════
+   SERVICE WORKER REGISTRATION
+   ═══════════════════════════════════════════════════════ */
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js', { scope: '/' })
+      .then(reg => {
+        // Check for updates every time the page loads
+        reg.update();
+        // Listen for new SW waiting — prompt user to refresh
+        reg.addEventListener('updatefound', () => {
+          const newWorker = reg.installing;
+          newWorker.addEventListener('statechange', () => {
+            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+              // New version available — show a toast if wattToast is ready
+              if (typeof window.wattToast === 'function') {
+                window.wattToast('Update available — refresh to get the latest version.', 'info', 8000);
+              }
+            }
+          });
+        });
+      })
+      .catch(() => {/* SW not supported or blocked — silently ignore */});
+  });
+}

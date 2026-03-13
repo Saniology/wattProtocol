@@ -857,8 +857,15 @@
         });
         const data = await res.json();
 
-        if (res.ok && data.success) {
-          // Redirect to personal dashboard after a short delay
+        if (res.ok && data.success && data.requiresVerification) {
+          // Email verification required — show check inbox message
+          form.style.display    = 'none';
+          success.style.display = 'block';
+          success.innerHTML     = '📬 Check your inbox — click the confirmation link to secure your spot.';
+          note.textContent      = 'Didn\'t get it? Check spam, or try again.';
+          note.style.color      = 'var(--gray5)';
+        } else if (res.ok && data.success) {
+          // Legacy / already-verified path
           form.style.display    = 'none';
           success.style.display = 'block';
           note.textContent      = '⚡ Redirecting to your dashboard...';
