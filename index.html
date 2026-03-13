@@ -331,6 +331,31 @@
 .waitlist-success { display: none; margin-top: 16px; font-family: var(--font-mono); font-size: 12px; letter-spacing: 2px; color: var(--green); }
 .waitlist-note { margin-top: 16px; font-family: var(--font-mono); font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--gray4); position: relative; }
 
+/* Referral code row */
+.waitlist-ref-row { max-width: 520px; margin: 12px auto 0; text-align: left; position: relative; }
+.waitlist-ref-toggle {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.15em;
+  text-transform: uppercase; color: var(--gray4);
+  cursor: pointer; transition: color 0.2s; display: inline-block;
+}
+.waitlist-ref-toggle:hover { color: var(--yellow); }
+.waitlist-ref-toggle span { color: var(--yellow); }
+.waitlist-ref-input {
+  display: flex; align-items: center; gap: 10px;
+  margin-top: 10px; border: 1px solid var(--border);
+  background: var(--gray2); padding: 0 16px;
+}
+.waitlist-ref-input input {
+  flex: 1; background: transparent; border: none;
+  padding: 13px 0; color: var(--yellow);
+  outline: none; text-transform: uppercase;
+}
+.waitlist-ref-input input::placeholder { color: var(--gray4); text-transform: none; font-size: 12px; letter-spacing: 0.05em; }
+#refCodeStatus {
+  font-family: var(--font-mono); font-size: 10px;
+  letter-spacing: 0.1em; white-space: nowrap;
+}
+
 /* Global map strip */
 .map-strip { padding: 80px; background: var(--gray2); }
 .map-strip-title { font-family: var(--font-mono); font-size: 10px; letter-spacing: 4px; text-transform: uppercase; color: var(--gray4); text-align: center; margin-bottom: 40px; }
@@ -611,6 +636,19 @@
     <input type="email" id="waitlistEmail" placeholder="your@email.com" required>
     <button type="submit" id="waitlistBtn">Join Now</button>
   </form>
+  <!-- Referral code row -->
+  <div class="waitlist-ref-row reveal" id="refRow">
+    <div class="waitlist-ref-toggle" id="refToggle" onclick="toggleRefInput()">
+      Have a referral code? <span>Enter it here →</span>
+    </div>
+    <div class="waitlist-ref-input" id="refInputWrap" style="display:none;">
+      <input type="text" id="refCodeInput" placeholder="e.g. X7K2PQ4M"
+        maxlength="8" autocomplete="off"
+        oninput="this.value=this.value.toUpperCase().replace(/[^A-Z0-9]/g,'')"
+        style="font-family:var(--font-mono);font-size:13px;letter-spacing:0.15em;">
+      <span id="refCodeStatus"></span>
+    </div>
+  </div>
   <div class="waitlist-success reveal" id="waitlistSuccess">⚡ You're on the list. Check your inbox — whitepaper on the way.</div>
   <p class="waitlist-note reveal" id="waitlistNote">No spam · Early access + bonus $WATT at launch</p>
 </section>
@@ -627,18 +665,68 @@
   }
   setInterval(animateData, 3000);
 
-  // Pick up referral code from URL: wattprotocol.io/ref/CODE
-  // shared.js handles the /ref/ redirect and sets the cookie; we also read it here.
+  // ── Referral code: read from URL param, cookie, or manual input ────────────
   (function () {
     const urlRef = new URLSearchParams(window.location.search).get('ref');
     if (urlRef) {
       document.cookie = `watt_ref=${urlRef};path=/;max-age=604800;SameSite=Lax`;
+      // Auto-populate and show the referral input
+      const inp = document.getElementById('refCodeInput');
+      const wrap = document.getElementById('refInputWrap');
+      const toggle = document.getElementById('refToggle');
+      inp.value = urlRef.toUpperCase();
+      wrap.style.display = 'flex';
+      toggle.innerHTML = 'Referral code applied: <span>' + urlRef.toUpperCase() + ' ✓</span>';
+      setRefStatus('✓ Applied', 'var(--green)');
     }
   })();
 
   function getRefCookie() {
-    return (document.cookie.split('; ').find(r => r.startsWith('watt_ref=')) || '').split('=')[1] || null;
+    const match = document.cookie.split('; ').find(r => r.startsWith('watt_ref='));
+    return match ? decodeURIComponent(match.split('=')[1]) : null;
   }
+
+  function getRefCode() {
+    // Priority: 1) manual input  2) URL ?ref= param  3) cookie
+    const manual = (document.getElementById('refCodeInput').value || '').trim().toUpperCase();
+    if (manual) return manual;
+
+    const urlRef = (new URLSearchParams(window.location.search).get('ref') || '').toUpperCase();
+    if (urlRef) return urlRef;
+
+    const cookie = (getRefCookie() || '').toUpperCase();
+    return cookie || null;
+  }
+
+  function setRefStatus(msg, color) {
+    const el = document.getElementById('refCodeStatus');
+    el.textContent = msg;
+    el.style.color  = color;
+  }
+
+  function toggleRefInput() {
+    const wrap   = document.getElementById('refInputWrap');
+    const toggle = document.getElementById('refToggle');
+    const isOpen = wrap.style.display !== 'none';
+    wrap.style.display = isOpen ? 'none' : 'flex';
+    if (!isOpen) {
+      document.getElementById('refCodeInput').focus();
+      toggle.innerHTML = 'Have a referral code? <span>Hide ↑</span>';
+    } else {
+      toggle.innerHTML = 'Have a referral code? <span>Enter it here →</span>';
+    }
+  }
+
+  // Live-validate referral code length as user types
+  document.getElementById('refCodeInput').addEventListener('input', function () {
+    const val = this.value.trim();
+    if (!val) { setRefStatus('', ''); return; }
+    if (val.length === 8) {
+      setRefStatus('✓ Code ready', 'var(--green)');
+    } else {
+      setRefStatus(`${val.length}/8 chars`, 'var(--gray4)');
+    }
+  });
 
   // Waitlist form
   (function () {
@@ -653,6 +741,9 @@
       const email = input.value.trim();
       if (!email) return;
 
+      const referredBy = getRefCode();
+      console.log('[WATT] Submitting signup — email:', email, '| referredBy:', referredBy || 'none');
+
       btn.textContent  = 'Joining...';
       btn.disabled     = true;
       input.disabled   = true;
@@ -663,7 +754,7 @@
         const res    = await fetch(apiUrl, {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ email, referredBy: getRefCookie() }),
+          body:    JSON.stringify({ email, referredBy }),
         });
         const data = await res.json();
 

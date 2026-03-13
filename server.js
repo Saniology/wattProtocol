@@ -155,6 +155,21 @@ function buildMagicLinkHtml(dashboardUrl) {
 </body></html>`;
 }
 
+// ── GET /ref/:code — referral link redirect ────────────────────────────────
+// When someone clicks wattprotocol.io/ref/X7K2PQ4M this fires.
+// Sets a cookie and redirects to the home page with ?ref= so the form picks it up.
+app.get('/ref/:code', (req, res) => {
+  const code = (req.params.code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!code) return res.redirect('/');
+
+  // Set cookie for 7 days
+  res.setHeader('Set-Cookie', `watt_ref=${code}; Path=/; Max-Age=604800; SameSite=Lax`);
+  console.log(`[WATT] Referral visit: code=${code}`);
+
+  // Redirect to home with ?ref= so the waitlist form auto-fills the code
+  res.redirect(`/?ref=${code}`);
+});
+
 // ── POST /api/waitlist ─────────────────────────────────────────────────────
 app.post('/api/waitlist', async (req, res) => {
   const { email, referredBy } = req.body || {};
@@ -204,18 +219,33 @@ app.post('/api/waitlist', async (req, res) => {
   }
 
   // Increment referrer count
-  if (referredBy) {
-    const { data: referrer } = await supabase
+  const cleanRef = (referredBy || '').toUpperCase().trim();
+  console.log(`[WATT] referredBy received: "${cleanRef || 'none'}"`);
+
+  if (cleanRef) {
+    // Use raw SQL increment to avoid race conditions
+    const { data: referrer, error: refErr } = await supabase
       .from('waitlist_users')
-      .select('id, referrals_count')
-      .eq('referral_code', referredBy.toUpperCase())
+      .select('id, email, referrals_count')
+      .eq('referral_code', cleanRef)
       .maybeSingle();
 
-    if (referrer) {
-      await supabase
+    if (refErr) {
+      console.error('[WATT] Referrer lookup error:', refErr.message);
+    } else if (!referrer) {
+      console.warn(`[WATT] Referral code "${cleanRef}" not found in DB — no credit given`);
+    } else {
+      const newCount = (referrer.referrals_count || 0) + 1;
+      const { error: updateErr } = await supabase
         .from('waitlist_users')
-        .update({ referrals_count: referrer.referrals_count + 1 })
+        .update({ referrals_count: newCount })
         .eq('id', referrer.id);
+
+      if (updateErr) {
+        console.error('[WATT] Referral count update error:', updateErr.message);
+      } else {
+        console.log(`[WATT] ✓ Referral credited: ${referrer.email} now has ${newCount} referral(s)`);
+      }
     }
   }
 
@@ -276,6 +306,12 @@ app.get('/api/me', async (req, res) => {
     .from('waitlist_users')
     .select('*', { count: 'exact', head: true });
 
+  // Live referral count — always accurate, retroactively correct
+  const { count: referralsCount } = await supabase
+    .from('waitlist_users')
+    .select('*', { count: 'exact', head: true })
+    .eq('referred_by', user.referral_code);
+
   // Mask email: da***@gmail.com
   const [local, domain] = user.email.split('@');
   const maskedEmail = local.slice(0, 2) + '***@' + domain;
@@ -284,12 +320,12 @@ app.get('/api/me', async (req, res) => {
     email:          maskedEmail,
     referralCode:   user.referral_code,
     referralLink:   user.referral_link,
-    referralsCount: user.referrals_count,
+    referralsCount: referralsCount || 0,
     foundingMember: user.founding_member,
     signedUpAt:     user.signed_up_at,
     position:       position || 1,
     total:          total    || 1,
-    wattEarned:     (user.referrals_count || 0) * 500,
+    wattEarned:     (referralsCount || 0) * 500,
   });
 });
 
@@ -320,6 +356,12 @@ app.post('/api/lookup', async (req, res) => {
     .from('waitlist_users')
     .select('*', { count: 'exact', head: true });
 
+  // Live referral count — always accurate, retroactively correct
+  const { count: referralsCount } = await supabase
+    .from('waitlist_users')
+    .select('*', { count: 'exact', head: true })
+    .eq('referred_by', user.referral_code);
+
   const [local, domain] = user.email.split('@');
   const maskedEmail = local.slice(0, 2) + '***@' + domain;
 
@@ -327,12 +369,12 @@ app.post('/api/lookup', async (req, res) => {
     email:          maskedEmail,
     referralCode:   user.referral_code,
     referralLink:   user.referral_link,
-    referralsCount: user.referrals_count,
+    referralsCount: referralsCount || 0,
     foundingMember: user.founding_member,
     signedUpAt:     user.signed_up_at,
     position:       position || 1,
     total:          total    || 1,
-    wattEarned:     (user.referrals_count || 0) * 500,
+    wattEarned:     (referralsCount || 0) * 500,
   });
 });
 
