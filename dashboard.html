@@ -285,7 +285,10 @@
   <div id="dashboardMain">
 
     <!-- Hero -->
-    <div class="db-tag"><span class="dot"></span> Live Dashboard</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+      <div class="db-tag"><span class="dot"></span> Live Dashboard</div>
+      <button onclick="logoutDashboard()" style="background:none;border:1px solid var(--border);color:var(--gray4);font-family:var(--font-mono);font-size:10px;letter-spacing:0.12em;text-transform:uppercase;padding:6px 14px;cursor:pointer;transition:all 0.15s;" onmouseover="this.style.borderColor='var(--red)';this.style.color='var(--red)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--gray4)'">← Logout</button>
+    </div>
     <h1 class="db-title">WELCOME<br><span style="color:var(--yellow)">EARNER.</span></h1>
     <p class="db-subtitle" id="dbSubtitle"></p>
     <p class="db-meta" id="dbMeta"></p>
@@ -552,7 +555,7 @@ function renderDashboard(data) {
   document.getElementById('statTotal').textContent      = `of ${data.total.toLocaleString()} total`;
   document.getElementById('statWatt').textContent       = data.wattEarned.toLocaleString();
   document.getElementById('statReferrals').textContent  = data.referralsCount;
-  document.getElementById('statMultiplier').textContent = data.foundingMember ? '1.5×' : '1×';
+  document.getElementById('statMultiplier').textContent = (data.multiplier || (data.foundingMember ? 1.5 : 1)) + '×';
 
   const slots = Math.min(data.position, 1000);
   document.getElementById('progressFill').style.width = Math.min(100, (slots / 1000) * 100) + '%';
@@ -570,15 +573,15 @@ function renderDashboard(data) {
     },
     {
       icon: '⚡', active: true,
-      name: data.foundingMember ? '1.5× Earning Multiplier' : '1× Standard Earning Rate',
+      name: data.foundingMember ? `${data.multiplier || 1.5}× Earning Multiplier` : '1× Standard Earning Rate',
       desc: data.foundingMember
-        ? 'Earn 1.5 $WATT per KWh for your first 90 days — 50% more than standard users.'
+        ? `Earn ${data.multiplier || 1.5} $WATT per KWh for your first 90 days — more than standard users.`
         : 'Standard rate: 1 $WATT per verified KWh. Upgrade to Founding Member by joining earlier.',
     },
     {
       icon: '🔗', active: true,
-      name: 'Referral Rewards — 500 $WATT per install',
-      desc: `Share your link. Every friend who installs a WATT Meter earns you 500 $WATT. You've referred ${data.referralsCount} ${data.referralsCount === 1 ? 'person' : 'people'} — that's ${data.wattEarned.toLocaleString()} $WATT so far.`,
+      name: `Referral Rewards — ${(data.referralReward || 500).toLocaleString()} $WATT per install`,
+      desc: `Share your link. Every friend who installs a WATT Meter earns you ${(data.referralReward || 500).toLocaleString()} $WATT. You've referred ${data.referralsCount} ${data.referralsCount === 1 ? 'person' : 'people'} — that's ${data.wattEarned.toLocaleString()} $WATT so far.`,
     },
     {
       icon: '🏅', active: data.foundingMember,
@@ -706,7 +709,20 @@ async function lookupByEmail(source) {
       return;
     }
 
+    // Admin redirect — store key + email and go to admin panel
+    if (data.isAdmin) {
+      sessionStorage.setItem('adminKey',   data.adminKey);
+      sessionStorage.setItem('adminEmail', email);
+      window.location.href = 'admin.html';
+      return;
+    }
+
     renderDashboard(data);
+    // Re-enable button and clear input after successful switch
+    btnEl.textContent  = orig;
+    btnEl.disabled     = false;
+    emailEl.value      = '';
+    noteEl.textContent = '';
 
   } catch {
     noteEl.textContent = 'Could not connect. Is the server running?';
@@ -714,6 +730,16 @@ async function lookupByEmail(source) {
     btnEl.textContent  = orig;
     btnEl.disabled     = false;
   }
+}
+
+function logoutDashboard() {
+  // Clear URL and return to the email lookup form
+  history.replaceState(null, '', 'dashboard.html');
+  document.getElementById('dashboardMain').style.display   = 'none';
+  document.getElementById('dashboardLoading').style.display = 'none';
+  document.getElementById('dashboardResend').style.display  = 'block';
+  document.getElementById('resendEmail').value = '';
+  document.getElementById('resendEmail').focus();
 }
 
 function copyLink() {

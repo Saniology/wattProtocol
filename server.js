@@ -21,13 +21,38 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_KEY
 );
 
+// ── Dynamic config cache (60s TTL) ────────────────────────────────────────
+let _configCache = null;
+let _configTime  = 0;
+
+async function getConfig() {
+  if (_configCache && Date.now() - _configTime < 60_000) return _configCache;
+  const { data } = await supabase.from('watt_config').select('key, value');
+  if (data?.length) {
+    _configCache = Object.fromEntries(data.map(r => [r.key, r.value]));
+    _configTime  = Date.now();
+  }
+  return _configCache || {};
+}
+
+function invalidateConfig() { _configCache = null; }
+
+// ── Admin auth middleware ──────────────────────────────────────────────────
+function requireAdmin(req, res, next) {
+  const key = (req.headers.authorization || '').replace('Bearer ', '').trim();
+  if (!process.env.ADMIN_KEY || key !== process.env.ADMIN_KEY) {
+    return res.status(401).json({ error: 'Unauthorized.' });
+  }
+  next();
+}
+
 // ── CORS: allow Live Server (5500) and any localhost origin ────────────────
 app.use((req, res, next) => {
   const origin = req.headers.origin || '';
   if (!origin || origin.startsWith('http://localhost') || origin.startsWith('http://127.0.0.1')) {
     res.setHeader('Access-Control-Allow-Origin', origin || '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   }
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
@@ -156,17 +181,11 @@ function buildMagicLinkHtml(dashboardUrl) {
 }
 
 // ── GET /ref/:code — referral link redirect ────────────────────────────────
-// When someone clicks wattprotocol.io/ref/X7K2PQ4M this fires.
-// Sets a cookie and redirects to the home page with ?ref= so the form picks it up.
 app.get('/ref/:code', (req, res) => {
   const code = (req.params.code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
   if (!code) return res.redirect('/');
-
-  // Set cookie for 7 days
   res.setHeader('Set-Cookie', `watt_ref=${code}; Path=/; Max-Age=604800; SameSite=Lax`);
   console.log(`[WATT] Referral visit: code=${code}`);
-
-  // Redirect to home with ?ref= so the waitlist form auto-fills the code
   res.redirect(`/?ref=${code}`);
 });
 
@@ -191,16 +210,20 @@ app.post('/api/waitlist', async (req, res) => {
     return res.status(409).json({ error: 'This email is already on the waitlist.' });
   }
 
+  // Load dynamic config
+  const cfg = await getConfig();
+  const foundingThreshold = parseInt(cfg.founding_member_threshold) || 1000;
+
   // Count existing users to assign founding member status
   const { count } = await supabase
     .from('waitlist_users')
     .select('*', { count: 'exact', head: true });
 
-  const siteUrl       = process.env.SITE_URL || 'https://wattprotocol.io';
-  const referralCode  = nanoid(8).toUpperCase();
-  const referralLink  = `${siteUrl}/ref/${referralCode}`;
-  const dashboardUrl  = `${siteUrl}/dashboard.html?ref=${referralCode}`;
-  const foundingMember = (count || 0) < 1000;
+  const siteUrl        = process.env.SITE_URL || 'https://wattprotocol.io';
+  const referralCode   = nanoid(8).toUpperCase();
+  const referralLink   = `${siteUrl}/ref/${referralCode}`;
+  const dashboardUrl   = `${siteUrl}/dashboard.html?ref=${referralCode}`;
+  const foundingMember = (count || 0) < foundingThreshold;
 
   // Sanitize referral code BEFORE insert so referred_by is stored consistently uppercase
   const cleanRef = (referredBy || '').toUpperCase().trim().replace(/[^A-Z0-9]/g, '');
@@ -223,9 +246,7 @@ app.post('/api/waitlist', async (req, res) => {
   }
 
   // Increment referrer count (cache field — live count is used for display)
-
   if (cleanRef) {
-    // Use raw SQL increment to avoid race conditions
     const { data: referrer, error: refErr } = await supabase
       .from('waitlist_users')
       .select('id, email, referrals_count')
@@ -242,7 +263,6 @@ app.post('/api/waitlist', async (req, res) => {
         .from('waitlist_users')
         .update({ referrals_count: newCount })
         .eq('id', referrer.id);
-
       if (updateErr) {
         console.error('[WATT] Referral count update error:', updateErr.message);
       } else {
@@ -297,44 +317,41 @@ app.get('/api/me', async (req, res) => {
 
   if (error || !user) return res.status(404).json({ error: 'No account found for this code.' });
 
-  // Waitlist position = how many signed up at or before this user
-  const { count: position } = await supabase
-    .from('waitlist_users')
-    .select('*', { count: 'exact', head: true })
-    .lte('signed_up_at', user.signed_up_at);
+  const [
+    { count: position },
+    { count: total },
+    { count: referralsCount, error: countErr },
+    cfg,
+  ] = await Promise.all([
+    supabase.from('waitlist_users').select('*', { count: 'exact', head: true }).lte('signed_up_at', user.signed_up_at),
+    supabase.from('waitlist_users').select('*', { count: 'exact', head: true }),
+    supabase.from('waitlist_users').select('*', { count: 'exact', head: true }).ilike('referred_by', user.referral_code),
+    getConfig(),
+  ]);
 
-  // Total signups
-  const { count: total } = await supabase
-    .from('waitlist_users')
-    .select('*', { count: 'exact', head: true });
+  if (countErr) console.error('[WATT] /api/me referral count error:', countErr.message);
 
-  // Live referral count — case-insensitive to handle any legacy data
-  const { count: referralsCount, error: countErr1 } = await supabase
-    .from('waitlist_users')
-    .select('*', { count: 'exact', head: true })
-    .ilike('referred_by', user.referral_code);
-
-  if (countErr1) console.error('[WATT] /api/me referral count error:', countErr1.message);
-  console.log(`[WATT] /api/me referral count for code "${user.referral_code}": ${referralsCount}`);
-
-  // Mask email: da***@gmail.com
-  const [local, domain] = user.email.split('@');
-  const maskedEmail = local.slice(0, 2) + '***@' + domain;
+  const referralReward    = parseInt(cfg.referral_reward_watt) || 500;
+  const foundingMultiplier = parseFloat(cfg.founding_member_multiplier) || 1.5;
+  const [local, domain]   = user.email.split('@');
+  const maskedEmail        = local.slice(0, 2) + '***@' + domain;
 
   return res.json({
-    email:          maskedEmail,
-    referralCode:   user.referral_code,
-    referralLink:   user.referral_link,
-    referralsCount: referralsCount || 0,
-    foundingMember: user.founding_member,
-    signedUpAt:     user.signed_up_at,
-    position:       position || 1,
-    total:          total    || 1,
-    wattEarned:     (referralsCount || 0) * 500,
+    email:            maskedEmail,
+    referralCode:     user.referral_code,
+    referralLink:     user.referral_link,
+    referralsCount:   referralsCount || 0,
+    foundingMember:   user.founding_member,
+    signedUpAt:       user.signed_up_at,
+    position:         position || 1,
+    total:            total    || 1,
+    referralReward,
+    multiplier:       user.founding_member ? foundingMultiplier : 1,
+    wattEarned:       (referralsCount || 0) * referralReward,
   });
 });
 
-// ── POST /api/lookup — find user by email and return dashboard data ────────
+// ── POST /api/lookup — find user by email ─────────────────────────────────
 app.post('/api/lookup', async (req, res) => {
   const { email } = req.body || {};
 
@@ -342,51 +359,66 @@ app.post('/api/lookup', async (req, res) => {
     return res.status(400).json({ error: 'Please enter a valid email address.' });
   }
 
+  const normalizedEmail = email.toLowerCase().trim();
+
+  // Admin shortcut — return admin token, skip user data
+  const adminEmail = (process.env.ADMIN_EMAIL || '').toLowerCase().trim();
+  if (adminEmail && normalizedEmail === adminEmail && process.env.ADMIN_KEY) {
+    console.log(`[WATT] Admin login: ${normalizedEmail}`);
+    return res.json({ isAdmin: true, adminKey: process.env.ADMIN_KEY });
+  }
+
   const { data: user } = await supabase
     .from('waitlist_users')
     .select('email, referral_code, referral_link, referrals_count, founding_member, signed_up_at')
-    .eq('email', email.toLowerCase().trim())
+    .eq('email', normalizedEmail)
     .maybeSingle();
 
   if (!user) {
     return res.status(404).json({ error: 'No account found for this email. Are you on the waitlist?' });
   }
 
-  const { count: position } = await supabase
-    .from('waitlist_users')
-    .select('*', { count: 'exact', head: true })
-    .lte('signed_up_at', user.signed_up_at);
+  const [
+    { count: position },
+    { count: total },
+    { count: referralsCount, error: countErr },
+    cfg,
+  ] = await Promise.all([
+    supabase.from('waitlist_users').select('*', { count: 'exact', head: true }).lte('signed_up_at', user.signed_up_at),
+    supabase.from('waitlist_users').select('*', { count: 'exact', head: true }),
+    supabase.from('waitlist_users').select('*', { count: 'exact', head: true }).ilike('referred_by', user.referral_code),
+    getConfig(),
+  ]);
 
-  const { count: total } = await supabase
-    .from('waitlist_users')
-    .select('*', { count: 'exact', head: true });
+  if (countErr) console.error('[WATT] /api/lookup referral count error:', countErr.message);
 
-  // Live referral count — case-insensitive to handle any legacy data
-  const { count: referralsCount, error: countErr2 } = await supabase
-    .from('waitlist_users')
-    .select('*', { count: 'exact', head: true })
-    .ilike('referred_by', user.referral_code);
-
-  if (countErr2) console.error('[WATT] /api/lookup referral count error:', countErr2.message);
-  console.log(`[WATT] /api/lookup referral count for code "${user.referral_code}": ${referralsCount}`);
-
-  const [local, domain] = user.email.split('@');
-  const maskedEmail = local.slice(0, 2) + '***@' + domain;
+  const referralReward     = parseInt(cfg.referral_reward_watt) || 500;
+  const foundingMultiplier = parseFloat(cfg.founding_member_multiplier) || 1.5;
+  const [local, domain]    = user.email.split('@');
+  const maskedEmail         = local.slice(0, 2) + '***@' + domain;
 
   return res.json({
-    email:          maskedEmail,
-    referralCode:   user.referral_code,
-    referralLink:   user.referral_link,
-    referralsCount: referralsCount || 0,
-    foundingMember: user.founding_member,
-    signedUpAt:     user.signed_up_at,
-    position:       position || 1,
-    total:          total    || 1,
-    wattEarned:     (referralsCount || 0) * 500,
+    email:            maskedEmail,
+    referralCode:     user.referral_code,
+    referralLink:     user.referral_link,
+    referralsCount:   referralsCount || 0,
+    foundingMember:   user.founding_member,
+    signedUpAt:       user.signed_up_at,
+    position:         position || 1,
+    total:            total    || 1,
+    referralReward,
+    multiplier:       user.founding_member ? foundingMultiplier : 1,
+    wattEarned:       (referralsCount || 0) * referralReward,
   });
 });
 
-// ── POST /api/send-dashboard-link — resend magic link to email ────────────
+// ── GET /api/announcement — public, no auth required ──────────────────────
+app.get('/api/announcement', async (req, res) => {
+  const cfg = await getConfig();
+  return res.json({ announcement: cfg.announcement || '' });
+});
+
+// ── POST /api/send-dashboard-link ─────────────────────────────────────────
 app.post('/api/send-dashboard-link', async (req, res) => {
   const { email } = req.body || {};
 
@@ -400,11 +432,9 @@ app.post('/api/send-dashboard-link', async (req, res) => {
     .eq('email', email.toLowerCase().trim())
     .maybeSingle();
 
-  // Always return success — don't reveal if email exists (prevent enumeration)
   if (user) {
-    const siteUrl    = process.env.SITE_URL || 'https://wattprotocol.io';
+    const siteUrl      = process.env.SITE_URL || 'https://wattprotocol.io';
     const dashboardUrl = `${siteUrl}/dashboard.html?ref=${user.referral_code}`;
-
     try {
       await transporter.sendMail({
         from:    `"${process.env.FROM_NAME || '$WATT Protocol'}" <${process.env.FROM_EMAIL || process.env.SMTP_USER}>`,
@@ -421,10 +451,149 @@ app.post('/api/send-dashboard-link', async (req, res) => {
   return res.json({ success: true });
 });
 
+// ═══════════════════════════════════════════════════════════════
+//  ADMIN ROUTES — all protected by requireAdmin middleware
+// ═══════════════════════════════════════════════════════════════
+
+// GET /api/admin/stats — overview dashboard
+app.get('/api/admin/stats', requireAdmin, async (req, res) => {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+
+  const [
+    { count: total },
+    { count: founding },
+    { count: todayCount },
+    { data: topReferrers },
+    { data: recent },
+    { data: refRows },
+    cfg,
+  ] = await Promise.all([
+    supabase.from('waitlist_users').select('*', { count: 'exact', head: true }),
+    supabase.from('waitlist_users').select('*', { count: 'exact', head: true }).eq('founding_member', true),
+    supabase.from('waitlist_users').select('*', { count: 'exact', head: true }).gte('signed_up_at', today.toISOString()),
+    supabase.from('waitlist_users').select('email, referral_code, referrals_count').order('referrals_count', { ascending: false }).limit(5),
+    supabase.from('waitlist_users').select('email, referral_code, founding_member, signed_up_at, referred_by').order('signed_up_at', { ascending: false }).limit(10),
+    supabase.from('waitlist_users').select('referrals_count'),
+    getConfig(),
+  ]);
+
+  const totalReferrals = (refRows || []).reduce((s, r) => s + (r.referrals_count || 0), 0);
+
+  return res.json({ total, founding, todayCount, totalReferrals, topReferrers, recent, config: cfg });
+});
+
+// GET /api/admin/users?page=1&search=&limit=20
+app.get('/api/admin/users', requireAdmin, async (req, res) => {
+  const page   = Math.max(1, parseInt(req.query.page) || 1);
+  const limit  = Math.min(100, parseInt(req.query.limit) || 25);
+  const search = (req.query.search || '').trim();
+  const from   = (page - 1) * limit;
+
+  let q = supabase
+    .from('waitlist_users')
+    .select('id, email, referral_code, referrals_count, founding_member, signed_up_at, referred_by', { count: 'exact' })
+    .order('signed_up_at', { ascending: false })
+    .range(from, from + limit - 1);
+
+  if (search) q = q.ilike('email', `%${search}%`);
+
+  const { data, count, error } = await q;
+  if (error) return res.status(500).json({ error: error.message });
+
+  return res.json({ users: data || [], total: count || 0, page, pages: Math.ceil((count || 0) / limit) });
+});
+
+// PATCH /api/admin/users/:id — update founding_member status
+app.patch('/api/admin/users/:id', requireAdmin, async (req, res) => {
+  const allowed = ['founding_member', 'status'];
+  const updates = Object.fromEntries(Object.entries(req.body).filter(([k]) => allowed.includes(k)));
+  const { error } = await supabase.from('waitlist_users').update(updates).eq('id', req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  return res.json({ success: true });
+});
+
+// DELETE /api/admin/users/:id
+app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
+  const { error } = await supabase.from('waitlist_users').delete().eq('id', req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  return res.json({ success: true });
+});
+
+// GET /api/admin/config
+app.get('/api/admin/config', requireAdmin, async (req, res) => {
+  const { data, error } = await supabase.from('watt_config').select('key, value').order('key');
+  if (error) return res.status(500).json({ error: error.message });
+  return res.json(Object.fromEntries((data || []).map(r => [r.key, r.value])));
+});
+
+// PUT /api/admin/config — upsert one or many config values
+app.put('/api/admin/config', requireAdmin, async (req, res) => {
+  const rows = Object.entries(req.body).map(([key, value]) => ({
+    key,
+    value:      String(value),
+    updated_at: new Date().toISOString(),
+  }));
+  const { error } = await supabase.from('watt_config').upsert(rows, { onConflict: 'key' });
+  if (error) return res.status(500).json({ error: error.message });
+  invalidateConfig();
+  return res.json({ success: true });
+});
+
+// POST /api/admin/resend-email/:id — resend welcome email to a user
+app.post('/api/admin/resend-email/:id', requireAdmin, async (req, res) => {
+  const { data: user } = await supabase
+    .from('waitlist_users')
+    .select('email, referral_code, referral_link')
+    .eq('id', req.params.id)
+    .maybeSingle();
+
+  if (!user) return res.status(404).json({ error: 'User not found.' });
+
+  const siteUrl      = process.env.SITE_URL || 'https://wattprotocol.io';
+  const dashboardUrl = `${siteUrl}/dashboard.html?ref=${user.referral_code}`;
+
+  try {
+    await transporter.sendMail({
+      from:    `"${process.env.FROM_NAME || '$WATT Protocol'}" <${process.env.FROM_EMAIL || process.env.SMTP_USER}>`,
+      to:      user.email,
+      subject: '⚡ Your $WATT Dashboard Link',
+      html:    buildMagicLinkHtml(dashboardUrl),
+      text:    `Your $WATT dashboard: ${dashboardUrl}`,
+    });
+    console.log(`[WATT] Admin resent dashboard email to ${user.email}`);
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('[WATT] Admin resend email error:', err.message);
+    return res.status(500).json({ error: 'Email send failed: ' + err.message });
+  }
+});
+
+// GET /api/admin/export — download all users as CSV
+app.get('/api/admin/export', requireAdmin, async (req, res) => {
+  const { data, error } = await supabase
+    .from('waitlist_users')
+    .select('email, referral_code, referrals_count, founding_member, signed_up_at, referred_by')
+    .order('signed_up_at');
+  if (error) return res.status(500).json({ error: error.message });
+
+  const q = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const csv = [
+    'Email,Referral Code,Referrals,Founding Member,Signed Up,Referred By',
+    ...(data || []).map(u =>
+      [q(u.email), q(u.referral_code), u.referrals_count || 0, u.founding_member, q(u.signed_up_at), q(u.referred_by || '')].join(',')
+    ),
+  ].join('\n');
+
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', `attachment; filename="watt-waitlist-${new Date().toISOString().slice(0,10)}.csv"`);
+  return res.send(csv);
+});
+
 // ── Start ──────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`[WATT] Server → http://localhost:${PORT}`);
-  console.log(`[WATT] SMTP   → ${process.env.SMTP_HOST}:${process.env.SMTP_PORT}`);
-  console.log(`[WATT] DB     → ${process.env.SUPABASE_URL || '⚠ SUPABASE_URL not set'}`);
+  console.log(`[WATT] Server  → http://localhost:${PORT}`);
+  console.log(`[WATT] SMTP    → ${process.env.SMTP_HOST}:${process.env.SMTP_PORT}`);
+  console.log(`[WATT] DB      → ${process.env.SUPABASE_URL || '⚠ SUPABASE_URL not set'}`);
+  console.log(`[WATT] Admin   → ${process.env.ADMIN_EMAIL  || '⚠ ADMIN_EMAIL not set'}`);
 });

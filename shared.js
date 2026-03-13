@@ -7,6 +7,21 @@
   // ── Detect current page
   const path = window.location.pathname.split('/').pop() || 'index.html';
 
+  // ── Announcement banner (fetched from server, shown on all pages) ──────
+  const _apiBase = window.location.port === '3000' ? '' : 'http://localhost:3000';
+  document.body.insertAdjacentHTML('afterbegin',
+    '<div id="watt-announcement" style="display:none;background:#f5e642;color:#080808;font-family:\'Courier New\',monospace;font-size:12px;font-weight:700;letter-spacing:0.08em;text-align:center;padding:10px 48px;position:relative;z-index:1001;"></div>'
+  );
+  fetch(`${_apiBase}/api/announcement`)
+    .then(r => r.ok ? r.json() : null)
+    .then(data => {
+      if (data && data.announcement && data.announcement.trim()) {
+        const el = document.getElementById('watt-announcement');
+        if (el) { el.textContent = data.announcement.trim(); el.style.display = 'block'; }
+      }
+    })
+    .catch(() => {/* server not running — silently ignore */});
+
   // ── Inject cursor
   document.body.insertAdjacentHTML('afterbegin', `
     <div id="watt-cursor"></div>
