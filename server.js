@@ -412,6 +412,42 @@ app.post('/api/lookup', async (req, res) => {
   });
 });
 
+// ── GET /api/stats — public, no auth required ─────────────────────────────
+app.get('/api/stats', async (req, res) => {
+  const [{ count: total }, cfg] = await Promise.all([
+    supabase.from('waitlist_users').select('*', { count: 'exact', head: true }),
+    getConfig(),
+  ]);
+  return res.json({
+    total:     total || 0,
+    threshold: parseInt(cfg.founding_member_threshold) || 1000,
+  });
+});
+
+// ── GET /unsubscribe?email=... — one-click unsubscribe from emails ─────────
+app.get('/unsubscribe', async (req, res) => {
+  const email = (req.query.email || '').toLowerCase().trim();
+  const siteUrl = process.env.SITE_URL || 'https://wattprotocol.io';
+
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.send(`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Unsubscribe — $WATT Protocol</title><style>body{margin:0;background:#080808;color:#fff;font-family:'Inter',system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px}div{max-width:420px;text-align:center}h2{color:#ef4444;margin-bottom:12px}p{color:#888;font-size:14px;line-height:1.7}a{color:#f5e642}</style></head><body><div><h2>Invalid Link</h2><p>This unsubscribe link is invalid or expired.<br>Email us at <a href="mailto:hello@wattprotocol.io">hello@wattprotocol.io</a> to opt out.</p><p style="margin-top:24px"><a href="${siteUrl}">← Back to $WATT Protocol</a></p></div></body></html>`);
+  }
+
+  // Mark the user as unsubscribed (we store it in a watt_config key or just log it)
+  // For simplicity: remove from waitlist OR flag in DB. Here we just flag with a note.
+  // The most respectful action is to note the unsubscribe without deleting their spot.
+  try {
+    await supabase
+      .from('waitlist_users')
+      .update({ unsubscribed: true })
+      .eq('email', email);
+  } catch {}
+
+  console.log(`[WATT] Unsubscribe: ${email}`);
+
+  return res.send(`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Unsubscribed — $WATT Protocol</title><style>body{margin:0;background:#080808;color:#fff;font-family:'Inter',system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px}div{max-width:420px;text-align:center}.icon{font-size:48px;margin-bottom:16px}h2{color:#f5e642;font-family:'Courier New',monospace;letter-spacing:0.05em;margin-bottom:12px}p{color:#888;font-size:14px;line-height:1.7}a{color:#f5e642;text-decoration:none}a:hover{text-decoration:underline}</style></head><body><div><div class="icon">✓</div><h2>You've been unsubscribed.</h2><p>We've removed <strong style="color:#fff">${email}</strong> from our mailing list. You won't receive any more emails from $WATT Protocol.</p><p style="margin-top:8px;font-size:12px;color:#555">Your waitlist spot is preserved. You can still access your dashboard anytime.</p><p style="margin-top:24px"><a href="${siteUrl}">← Back to $WATT Protocol</a></p></div></body></html>`);
+});
+
 // ── GET /api/announcement — public, no auth required ──────────────────────
 app.get('/api/announcement', async (req, res) => {
   const cfg = await getConfig();
@@ -462,6 +498,36 @@ app.post('/api/send-dashboard-link', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════
 //  ADMIN ROUTES — all protected by requireAdmin middleware
 // ═══════════════════════════════════════════════════════════════
+
+// GET /api/admin/chart — daily signups for the last N days
+app.get('/api/admin/chart', requireAdmin, async (req, res) => {
+  const days = Math.min(90, parseInt(req.query.days) || 30);
+  const from = new Date();
+  from.setDate(from.getDate() - days + 1);
+  from.setHours(0, 0, 0, 0);
+
+  const { data, error } = await supabase
+    .from('waitlist_users')
+    .select('signed_up_at')
+    .gte('signed_up_at', from.toISOString())
+    .order('signed_up_at');
+
+  if (error) return res.status(500).json({ error: error.message });
+
+  // Build date → count map
+  const counts = {};
+  for (let i = 0; i < days; i++) {
+    const d = new Date(from);
+    d.setDate(d.getDate() + i);
+    counts[d.toISOString().slice(0, 10)] = 0;
+  }
+  (data || []).forEach(r => {
+    const day = r.signed_up_at.slice(0, 10);
+    if (counts[day] !== undefined) counts[day]++;
+  });
+
+  return res.json({ labels: Object.keys(counts), values: Object.values(counts) });
+});
 
 // GET /api/admin/stats — overview dashboard
 app.get('/api/admin/stats', requireAdmin, async (req, res) => {
@@ -595,6 +661,18 @@ app.get('/api/admin/export', requireAdmin, async (req, res) => {
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', `attachment; filename="watt-waitlist-${new Date().toISOString().slice(0,10)}.csv"`);
   return res.send(csv);
+});
+
+// ── /favicon.ico — serve the SVG favicon (stops browser 404 noise) ────────
+app.get('/favicon.ico', (_req, res) => {
+  res.sendFile(path.join(__dirname, 'favicon.svg'), {
+    headers: { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'public, max-age=86400' },
+  });
+});
+
+// ── 404 fallback — serve custom 404 page for unmatched routes ─────────────
+app.use((_req, res) => {
+  res.status(404).sendFile(path.join(__dirname, '404.html'));
 });
 
 // ── Start ──────────────────────────────────────────────────────────────────

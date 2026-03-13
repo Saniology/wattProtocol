@@ -126,7 +126,7 @@
       <div class="footer-bottom">
         <span class="footer-copy">© 2025 $WATT Protocol · Velion Global Technologies</span>
         <div class="footer-live"><div class="footer-live-dot"></div> Building on Base Network</div>
-        <span class="footer-legal">Privacy · Terms · Not Financial Advice</span>
+        <span class="footer-legal"><a href="privacy.html" style="color:inherit;text-decoration:none;">Privacy</a> · <a href="terms.html" style="color:inherit;text-decoration:none;">Terms</a> · Not Financial Advice</span>
       </div>
     </footer>
   `);
@@ -189,4 +189,148 @@
     }
   });
 
+})();
+
+/* ═══════════════════════════════════════════════════════
+   GLOBAL TOAST SYSTEM
+   Usage: window.wattToast('Message', 'success'|'error'|'info')
+   ═══════════════════════════════════════════════════════ */
+(function() {
+  // Inject toast container + styles
+  const style = document.createElement('style');
+  style.textContent = `
+    #watt-toast-container {
+      position: fixed; bottom: 28px; right: 28px; z-index: 99999;
+      display: flex; flex-direction: column; gap: 10px; pointer-events: none;
+    }
+    .watt-toast {
+      display: flex; align-items: center; gap: 12px;
+      background: #1a1a1a; border: 1px solid #333;
+      color: #fff; font-family: 'Courier New', monospace;
+      font-size: 12px; font-weight: 700; letter-spacing: 0.06em;
+      padding: 14px 20px; min-width: 260px; max-width: 400px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+      transform: translateX(120%); opacity: 0;
+      transition: transform 0.3s cubic-bezier(0.34,1.56,0.64,1), opacity 0.3s ease;
+      pointer-events: auto;
+    }
+    .watt-toast.show { transform: translateX(0); opacity: 1; }
+    .watt-toast.hide { transform: translateX(120%); opacity: 0; }
+    .watt-toast-bar { width: 3px; height: 36px; flex-shrink: 0; }
+    .watt-toast.success .watt-toast-bar { background: #22c55e; }
+    .watt-toast.error   .watt-toast-bar { background: #ef4444; }
+    .watt-toast.info    .watt-toast-bar { background: #f5e642; }
+    .watt-toast-icon { font-size: 15px; flex-shrink: 0; }
+    .watt-toast-msg { flex: 1; line-height: 1.5; }
+    .watt-toast-close { background: none; border: none; color: #555; font-size: 16px; cursor: pointer; padding: 0 0 0 8px; flex-shrink: 0; line-height: 1; transition: color 0.15s; }
+    .watt-toast-close:hover { color: #fff; }
+    @media (max-width: 500px) {
+      #watt-toast-container { left: 16px; right: 16px; bottom: 16px; }
+      .watt-toast { min-width: 0; }
+    }
+  `;
+  document.head.appendChild(style);
+
+  const container = document.createElement('div');
+  container.id = 'watt-toast-container';
+  document.body.appendChild(container);
+
+  const icons = { success: '✓', error: '✕', info: '⚡' };
+
+  window.wattToast = function(message, type = 'info', duration = 4000) {
+    const toast = document.createElement('div');
+    toast.className = `watt-toast ${type}`;
+    toast.innerHTML = `
+      <div class="watt-toast-bar"></div>
+      <span class="watt-toast-icon">${icons[type] || '⚡'}</span>
+      <span class="watt-toast-msg">${message}</span>
+      <button class="watt-toast-close" aria-label="Dismiss">✕</button>
+    `;
+    container.appendChild(toast);
+
+    // Trigger entrance animation
+    requestAnimationFrame(() => requestAnimationFrame(() => toast.classList.add('show')));
+
+    const dismiss = () => {
+      toast.classList.remove('show');
+      toast.classList.add('hide');
+      setTimeout(() => toast.remove(), 350);
+    };
+
+    toast.querySelector('.watt-toast-close').addEventListener('click', dismiss);
+    if (duration > 0) setTimeout(dismiss, duration);
+    return dismiss;
+  };
+})();
+
+/* ═══════════════════════════════════════════════════════
+   GDPR COOKIE CONSENT BANNER
+   Shows once, stores choice in localStorage.
+   Sets watt_ref cookie only after consent.
+   ═══════════════════════════════════════════════════════ */
+(function() {
+  const CONSENT_KEY = 'watt_cookie_consent';
+  if (localStorage.getItem(CONSENT_KEY)) return; // already decided
+
+  const style = document.createElement('style');
+  style.textContent = `
+    #watt-consent {
+      position: fixed; bottom: 0; left: 0; right: 0; z-index: 99990;
+      background: #111; border-top: 1px solid #2a2a2a;
+      padding: 18px 32px; display: flex; align-items: center;
+      gap: 20px; flex-wrap: wrap; justify-content: space-between;
+      transform: translateY(100%);
+      transition: transform 0.4s cubic-bezier(0.34,1.2,0.64,1);
+      box-shadow: 0 -8px 32px rgba(0,0,0,0.5);
+    }
+    #watt-consent.show { transform: translateY(0); }
+    #watt-consent p {
+      font-family: 'Inter', sans-serif; font-size: 13px; color: #888;
+      line-height: 1.6; margin: 0; flex: 1; min-width: 240px;
+    }
+    #watt-consent a { color: #f5e642; text-decoration: none; }
+    #watt-consent a:hover { text-decoration: underline; }
+    #watt-consent-btns { display: flex; gap: 10px; flex-shrink: 0; }
+    #watt-consent-accept {
+      background: #f5e642; color: #080808; border: none;
+      font-family: 'Courier New', monospace; font-size: 10px; font-weight: 700;
+      letter-spacing: 0.15em; text-transform: uppercase; padding: 10px 20px; cursor: pointer;
+      transition: background 0.2s;
+    }
+    #watt-consent-accept:hover { background: #ffe100; }
+    #watt-consent-decline {
+      background: none; border: 1px solid #333; color: #555;
+      font-family: 'Courier New', monospace; font-size: 10px; letter-spacing: 0.1em;
+      text-transform: uppercase; padding: 10px 16px; cursor: pointer; transition: all 0.15s;
+    }
+    #watt-consent-decline:hover { border-color: #555; color: #888; }
+    @media (max-width: 600px) {
+      #watt-consent { padding: 16px 20px; gap: 14px; }
+      #watt-consent-btns { width: 100%; }
+      #watt-consent-accept, #watt-consent-decline { flex: 1; text-align: center; }
+    }
+  `;
+  document.head.appendChild(style);
+
+  const banner = document.createElement('div');
+  banner.id = 'watt-consent';
+  banner.innerHTML = `
+    <p>We use a single cookie (<code style="color:#fff;font-size:11px">watt_ref</code>) to track referral codes for 7 days so that referral credit is correctly attributed. No advertising or third-party tracking.
+    <a href="privacy.html"> Learn more →</a></p>
+    <div id="watt-consent-btns">
+      <button id="watt-consent-decline">Decline</button>
+      <button id="watt-consent-accept">Accept Cookies</button>
+    </div>
+  `;
+  document.body.appendChild(banner);
+  requestAnimationFrame(() => requestAnimationFrame(() => banner.classList.add('show')));
+
+  const dismiss = (accepted) => {
+    localStorage.setItem(CONSENT_KEY, accepted ? 'accepted' : 'declined');
+    banner.style.transform = 'translateY(100%)';
+    setTimeout(() => banner.remove(), 400);
+  };
+
+  document.getElementById('watt-consent-accept').addEventListener('click', () => dismiss(true));
+  document.getElementById('watt-consent-decline').addEventListener('click', () => dismiss(false));
 })();

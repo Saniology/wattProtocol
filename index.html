@@ -5,7 +5,30 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="description" content="$WATT Protocol — Earn crypto tokens for generating renewable energy. Born in Africa, built for the world.">
 <title>$WATT Protocol — Energy to Earn</title>
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg width='128' height='128' viewBox='0 0 128 128' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Ccircle cx='64' cy='64' r='64' fill='%23070400'/%3E%3Cdefs%3E%3CradialGradient id='fg' cx='38%25' cy='30%25' r='75%25'%3E%3Cstop offset='0%25' stop-color='%23FFF8CC'/%3E%3Cstop offset='28%25' stop-color='%23F5C518'/%3E%3Cstop offset='62%25' stop-color='%23D4920E'/%3E%3Cstop offset='100%25' stop-color='%238A5500'/%3E%3C/radialGradient%3E%3Cmask id='fm'%3E%3Crect width='128' height='128' fill='white'/%3E%3Cpath d='M73 20 L48 64 H66 L58 108 L82 60 H65 Z' fill='black'/%3E%3C/mask%3E%3C/defs%3E%3Ccircle cx='64' cy='64' r='56' fill='url(%23fg)' mask='url(%23fm)'/%3E%3Cpath d='M73 20 L48 64 H66 L58 108 L82 60 H65 Z' fill='%23070400'/%3E%3C/svg%3E">
+<!-- Open Graph -->
+<meta property="og:type"        content="website">
+<meta property="og:site_name"   content="$WATT Protocol">
+<meta property="og:title"       content="$WATT Protocol — Energy to Earn">
+<meta property="og:description" content="Generate clean energy → earn $WATT tokens. A decentralized protocol rewarding individuals worldwide for renewable energy. Born in Africa. Built for the World.">
+<meta property="og:url"         content="https://wattprotocol.io/">
+<meta property="og:image"       content="https://wattprotocol.io/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height"content="630">
+<!-- Twitter Card -->
+<meta name="twitter:card"        content="summary_large_image">
+<meta name="twitter:site"        content="@WATTProtocol">
+<meta name="twitter:title"       content="$WATT Protocol — Energy to Earn">
+<meta name="twitter:description" content="Generate clean energy → earn $WATT tokens. Born in Africa. Built for the World.">
+<meta name="twitter:image"       content="https://wattprotocol.io/og-image.png">
+<!-- Canonical -->
+<link rel="canonical" href="https://wattprotocol.io/">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#f5e642">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="$WATT">
 <link rel="stylesheet" href="shared.css">
 <style>
 /* ── HERO ── */
@@ -330,6 +353,14 @@
 .waitlist-form button:hover { background: var(--orange); color: var(--white); }
 .waitlist-success { display: none; margin-top: 16px; font-family: var(--font-mono); font-size: 12px; letter-spacing: 2px; color: var(--green); }
 .waitlist-note { margin-top: 16px; font-family: var(--font-mono); font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--gray4); position: relative; }
+/* Founding counter */
+.founding-counter { max-width: 480px; margin: 0 auto 40px; }
+.founding-counter-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.founding-counter-label { font-family: var(--font-mono); font-size: 11px; font-weight: 700; letter-spacing: 0.15em; text-transform: uppercase; color: var(--yellow); }
+.founding-counter-nums { font-family: var(--font-mono); font-size: 11px; color: var(--white); font-weight: 600; }
+.founding-bar-track { width: 100%; height: 6px; background: var(--gray3); position: relative; overflow: hidden; }
+.founding-bar-fill { height: 100%; background: linear-gradient(90deg, var(--yellow), var(--orange)); transition: width 1.2s cubic-bezier(0.4,0,0.2,1); }
+.founding-counter-sub { font-family: var(--font-mono); font-size: 10px; color: var(--gray4); margin-top: 8px; letter-spacing: 0.05em; }
 
 /* Referral code row */
 .waitlist-ref-row { max-width: 520px; margin: 12px auto 0; text-align: left; position: relative; }
@@ -663,6 +694,19 @@
   <div class="tag reveal" style="justify-content:center;">Early Access</div>
   <h2 class="waitlist-title reveal">BE<br><span style="color:var(--yellow)">FIRST.</span></h2>
   <p class="waitlist-sub reveal">Early adopters receive bonus $WATT at launch. Join thousands of people worldwide building the clean energy economy.</p>
+
+  <!-- Live founding slots counter -->
+  <div class="founding-counter reveal" id="foundingCounter" style="display:none">
+    <div class="founding-counter-top">
+      <span class="founding-counter-label">⚡ Founding Member Slots</span>
+      <span class="founding-counter-nums"><span id="slotsFilled">—</span> / <span id="slotsTotal">1,000</span> claimed</span>
+    </div>
+    <div class="founding-bar-track">
+      <div class="founding-bar-fill" id="slotsBar" style="width:0%"></div>
+    </div>
+    <p class="founding-counter-sub" id="slotsLeft">Founding members earn 1.5× $WATT — forever.</p>
+  </div>
+
   <form class="waitlist-form reveal" id="waitlistForm">
     <input type="email" id="waitlistEmail" placeholder="your@email.com" required>
     <button type="submit" id="waitlistBtn">Join Now</button>
@@ -686,6 +730,30 @@
 
 <script src="shared.js"></script>
 <script>
+  // ── Live founding slots counter ────────────────────────────────────────
+  const _apiBase = window.location.port === '3000' ? '' : 'http://localhost:3000';
+  (async function loadSlots() {
+    try {
+      const r = await fetch(`${_apiBase}/api/stats`);
+      if (!r.ok) return;
+      const d = await r.json();
+      const total     = d.total     || 0;
+      const threshold = d.threshold || 1000;
+      const remaining = Math.max(0, threshold - total);
+      const pct       = Math.min(100, (total / threshold) * 100);
+
+      document.getElementById('slotsFilled').textContent = total.toLocaleString();
+      document.getElementById('slotsTotal').textContent  = threshold.toLocaleString();
+      document.getElementById('slotsBar').style.width    = pct + '%';
+      document.getElementById('slotsLeft').textContent   = remaining > 0
+        ? `${remaining.toLocaleString()} founding slots remaining — earn 1.5× $WATT forever.`
+        : 'All founding slots claimed. Standard membership available.';
+
+      const counter = document.getElementById('foundingCounter');
+      if (counter) counter.style.display = 'block';
+    } catch {}
+  })();
+
   // Live data animation
   function animateData() {
     const kwh = (14 + Math.random()*2).toFixed(1);

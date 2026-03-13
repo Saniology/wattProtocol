@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>$WATT Admin Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
 :root {
   --black:  #080808;
@@ -113,6 +114,7 @@ body { background: var(--black); color: var(--white); font-family: 'Inter', syst
 .page-btn { background: var(--gray2); border: 1px solid var(--border); color: var(--white); font-family: var(--mono); font-size: 10px; padding: 7px 16px; cursor: pointer; transition: all 0.15s; }
 .page-btn:hover:not(:disabled) { border-color: var(--yellow); color: var(--yellow); }
 .page-btn:disabled { opacity: 0.3; cursor: default; }
+.chart-range-btn.active { border-color: var(--yellow); color: var(--yellow); }
 
 /* ── Loading / empty ── */
 .loading-row td { text-align: center; color: var(--gray4); font-family: var(--mono); font-size: 11px; padding: 32px !important; }
@@ -195,6 +197,22 @@ body { background: var(--black); color: var(--white); font-family: 'Inter', syst
       <div class="stat-label">Referral Reward</div>
       <div class="stat-value" id="sReward">—</div>
       <div class="stat-sub" id="sThreshold">— founding slots</div>
+    </div>
+  </div>
+
+  <!-- Signups Trend Chart -->
+  <div class="section-title">Signup Trend</div>
+  <div class="panel" style="margin-bottom:32px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px;">
+      <span style="font-family:var(--mono);font-size:11px;color:var(--gray4)">Daily new members</span>
+      <div style="display:flex;gap:8px;">
+        <button class="page-btn chart-range-btn active" data-days="14" onclick="setChartRange(14, this)">14d</button>
+        <button class="page-btn chart-range-btn" data-days="30" onclick="setChartRange(30, this)">30d</button>
+        <button class="page-btn chart-range-btn" data-days="90" onclick="setChartRange(90, this)">90d</button>
+      </div>
+    </div>
+    <div style="position:relative;height:200px;">
+      <canvas id="signupChart"></canvas>
     </div>
   </div>
 
@@ -311,6 +329,25 @@ body { background: var(--black); color: var(--white); font-family: 'Inter', syst
 </div><!-- /admin-body -->
 
 <script>
+/* ── Toast ── */
+(function(){
+  const s=document.createElement('style');
+  s.textContent=`#wtt{position:fixed;bottom:28px;right:28px;z-index:99999;display:flex;flex-direction:column;gap:10px;pointer-events:none}.wt{display:flex;align-items:center;gap:12px;background:#1a1a1a;border:1px solid #333;color:#fff;font-family:'Courier New',monospace;font-size:12px;font-weight:700;letter-spacing:.06em;padding:14px 20px;min-width:260px;max-width:400px;box-shadow:0 8px 32px rgba(0,0,0,.6);transform:translateX(120%);opacity:0;transition:transform .3s cubic-bezier(.34,1.56,.64,1),opacity .3s ease;pointer-events:auto}.wt.show{transform:translateX(0);opacity:1}.wt.hide{transform:translateX(120%);opacity:0}.wt-bar{width:3px;height:36px;flex-shrink:0}.wt.success .wt-bar{background:#22c55e}.wt.error .wt-bar{background:#ef4444}.wt.info .wt-bar{background:#f5e642}.wt-msg{flex:1;line-height:1.5}.wt-x{background:none;border:none;color:#555;font-size:16px;cursor:pointer;padding:0 0 0 8px;transition:color .15s}.wt-x:hover{color:#fff}`;
+  document.head.appendChild(s);
+  const c=document.createElement('div');c.id='wtt';document.body.appendChild(c);
+  const icons={success:'✓',error:'✕',info:'⚡'};
+  window.wattToast=function(msg,type='info',dur=4000){
+    const t=document.createElement('div');t.className=`wt ${type}`;
+    t.innerHTML=`<div class="wt-bar"></div><span style="font-size:15px;flex-shrink:0">${icons[type]||'⚡'}</span><span class="wt-msg">${msg}</span><button class="wt-x" aria-label="Dismiss">✕</button>`;
+    c.appendChild(t);
+    requestAnimationFrame(()=>requestAnimationFrame(()=>t.classList.add('show')));
+    const dismiss=()=>{t.classList.remove('show');t.classList.add('hide');setTimeout(()=>t.remove(),350);};
+    t.querySelector('.wt-x').addEventListener('click',dismiss);
+    if(dur>0)setTimeout(dismiss,dur);
+    return dismiss;
+  };
+})();
+
 const API = window.location.port === '3000' ? '' : 'http://localhost:3000';
 
 // ── Auth check ────────────────────────────────────────────────────────────
@@ -340,7 +377,7 @@ let roadmapStages = [];
 
 // ── Boot ──────────────────────────────────────────────────────────────────
 (async function init() {
-  await Promise.all([ loadStats(), loadUsers() ]);
+  await Promise.all([ loadStats(), loadUsers(), loadChart(14) ]);
 })();
 
 // ── Stats ─────────────────────────────────────────────────────────────────
@@ -511,8 +548,9 @@ async function resendEmail(id, email) {
     });
     if (res.status === 401) return logout();
     const data = await res.json();
-    alert(data.success ? `✓ Email sent to ${email}` : `Failed: ${data.error}`);
-  } catch (e) { alert('Network error — is the server running?'); }
+    if (data.success) wattToast(`Email sent to ${email}`, 'success');
+    else wattToast(`Failed: ${data.error}`, 'error');
+  } catch (e) { wattToast('Network error — is the server running?', 'error'); }
 }
 
 // ── Delete user ───────────────────────────────────────────────────────────
@@ -594,7 +632,7 @@ function exportCSV() {
       a.click();
       URL.revokeObjectURL(blobUrl);
     })
-    .catch(() => alert('Export failed. Is the server running?'));
+    .catch(() => wattToast('Export failed. Is the server running?', 'error'));
 }
 
 // ── Pagination ────────────────────────────────────────────────────────────
@@ -619,6 +657,77 @@ function fmtDate(iso) {
 
 function escHtml(s) {
   return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Signup trend chart ────────────────────────────────────────────────────
+let _chart = null;
+
+async function loadChart(days = 14) {
+  try {
+    const res = await fetch(`${API}/api/admin/chart?days=${days}`, { headers: authHeaders() });
+    if (res.status === 401) return logout();
+    const { labels, values } = await res.json();
+
+    // Format labels as "Mar 5" etc.
+    const fmtLabel = iso => {
+      const d = new Date(iso + 'T12:00:00Z');
+      return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+    };
+
+    const ctx = document.getElementById('signupChart').getContext('2d');
+
+    if (_chart) { _chart.destroy(); _chart = null; }
+
+    _chart = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: labels.map(fmtLabel),
+        datasets: [{
+          label: 'New Members',
+          data: values,
+          backgroundColor: 'rgba(245,230,66,0.25)',
+          borderColor:     'rgba(245,230,66,0.8)',
+          borderWidth: 1,
+          borderRadius: 2,
+          hoverBackgroundColor: 'rgba(245,230,66,0.45)',
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: '#1a1a1a',
+            borderColor: '#333',
+            borderWidth: 1,
+            titleColor: '#f5e642',
+            bodyColor: '#fff',
+            titleFont: { family: "'Courier New', monospace", size: 10 },
+            bodyFont:  { family: "'Courier New', monospace", size: 12, weight: '700' },
+            callbacks: { label: ctx => ` ${ctx.parsed.y} member${ctx.parsed.y !== 1 ? 's' : ''}` },
+          },
+        },
+        scales: {
+          x: {
+            grid:  { color: 'rgba(255,255,255,0.04)' },
+            ticks: { color: '#555', font: { family: "'Courier New', monospace", size: 9 }, maxRotation: 45 },
+          },
+          y: {
+            grid:      { color: 'rgba(255,255,255,0.04)' },
+            ticks:     { color: '#555', font: { family: "'Courier New', monospace", size: 10 }, stepSize: 1 },
+            beginAtZero: true,
+          },
+        },
+      },
+    });
+  } catch (e) { console.error('Chart load error:', e); }
+}
+
+function setChartRange(days, btn) {
+  document.querySelectorAll('.chart-range-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  loadChart(days);
 }
 
 // ── Roadmap editor ────────────────────────────────────────────────────────

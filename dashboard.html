@@ -3,8 +3,29 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="Your $WATT Protocol dashboard — view your waitlist position, referrals, and earned $WATT tokens.">
 <title>My Dashboard — $WATT Protocol</title>
+<!-- Open Graph -->
+<meta property="og:type"        content="website">
+<meta property="og:site_name"   content="$WATT Protocol">
+<meta property="og:title"       content="My $WATT Dashboard">
+<meta property="og:description" content="View your waitlist position, referral count, and $WATT tokens earned. Join the global clean energy revolution.">
+<meta property="og:url"         content="https://wattprotocol.io/dashboard.html">
+<meta property="og:image"       content="https://wattprotocol.io/og-image.png">
+<!-- Twitter Card -->
+<meta name="twitter:card"        content="summary_large_image">
+<meta name="twitter:site"        content="@WATTProtocol">
+<meta name="twitter:title"       content="My $WATT Dashboard">
+<meta name="twitter:description" content="View your waitlist position, referrals, and $WATT tokens earned.">
+<meta name="twitter:image"       content="https://wattprotocol.io/og-image.png">
+<link rel="canonical" href="https://wattprotocol.io/dashboard.html">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#f5e642">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="$WATT">
 <link rel="stylesheet" href="shared.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" defer></script>
 <style>
 
 .db-wrap {
@@ -354,6 +375,17 @@
           <a class="share-btn" id="shareTg" href="#" target="_blank" rel="noopener">✈ Telegram</a>
           <a class="share-btn" id="shareWa" href="#" target="_blank" rel="noopener">◉ WhatsApp</a>
         </div>
+
+        <!-- QR Code -->
+        <div id="qrWrap" style="margin-top:20px;padding-top:20px;border-top:1px solid var(--border);display:flex;align-items:center;gap:20px;">
+          <div id="qrCanvas" style="background:#fff;padding:8px;flex-shrink:0;width:100px;height:100px;display:flex;align-items:center;justify-content:center;">
+            <span style="font-size:10px;color:#999;font-family:var(--font-mono);">Loading…</span>
+          </div>
+          <div>
+            <div style="font-family:var(--font-mono);font-size:10px;letter-spacing:0.2em;text-transform:uppercase;color:var(--gray4);margin-bottom:6px;">Scan to Share</div>
+            <p style="font-size:12px;color:var(--gray5);line-height:1.6;margin:0;">Show this QR code to anyone — scanning it opens your referral link directly on their phone.</p>
+          </div>
+        </div>
       </div>
 
       <!-- Perks panel -->
@@ -610,6 +642,21 @@ function renderDashboard(data) {
 
   window._refLink = data.referralLink;
   document.getElementById('refLinkDisplay').textContent = data.referralLink;
+
+  // Generate QR code
+  const qrEl = document.getElementById('qrCanvas');
+  if (qrEl) {
+    qrEl.innerHTML = '';
+    if (typeof QRCode !== 'undefined') {
+      new QRCode(qrEl, { text: data.referralLink, width: 84, height: 84, colorDark: '#080808', colorLight: '#ffffff', correctLevel: QRCode.CorrectLevel.M });
+    } else {
+      // Fallback: use a QR API
+      const img = document.createElement('img');
+      img.src = `https://api.qrserver.com/v1/create-qr-code/?size=84x84&data=${encodeURIComponent(data.referralLink)}`;
+      img.alt = 'QR code'; img.width = 84; img.height = 84;
+      qrEl.appendChild(img);
+    }
+  }
 
   const tweet = encodeURIComponent(
     `I just joined the $WATT Protocol waitlist.\n\nEnergy to Earn — 1 KWh = 1 $WATT token. Automatically. No middleman.\nBorn in Africa. Built for the World. ⚡\n\n${data.referralLink}`
