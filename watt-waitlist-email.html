@@ -19,7 +19,7 @@
         <td style="background:#0f0f0f;border-bottom:1px solid #1a1a1a;padding:14px 24px;">
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
             <td><span style="font-family:'Courier New',Courier,monospace;font-size:11px;font-weight:700;color:#F5C518;letter-spacing:0.18em;">$WATT PROTOCOL</span></td>
-            <td align="right"><span style="font-family:'Courier New',Courier,monospace;font-size:10px;color:#333;letter-spacing:0.1em;">wattprotocol.io</span></td>
+            <td align="right"><span style="font-family:'Courier New',Courier,monospace;font-size:10px;color:#333;letter-spacing:0.1em;">{{SITE_URL_DISPLAY}}</span></td>
           </tr></table>
         </td>
       </tr>
@@ -218,13 +218,13 @@
           <p style="font-size:12px;color:#666;line-height:1.65;margin:0 0 18px 0;">Share your unique link. Every friend who joins and installs a meter earns you <strong style="color:#F5C518;">500 $WATT tokens</strong> at launch.</p>
           <!-- Link box -->
           <div style="background:#080808;border:1px solid #2a2a2a;padding:13px 16px;font-family:'Courier New',Courier,monospace;font-size:12px;color:#F5C518;margin-bottom:18px;word-break:break-all;">
-            wattprotocol.io/ref/<strong>{{REFERRAL_CODE}}</strong>
+            {{SITE_URL_DISPLAY}}/ref/<strong>{{REFERRAL_CODE}}</strong>
           </div>
           <!-- CTA buttons -->
           <table role="presentation" cellpadding="0" cellspacing="0">
             <tr>
               <td style="padding-right:10px;">
-                <a href="https://twitter.com/intent/tweet?text=I%20just%20joined%20the%20%24WATT%20Protocol%20waitlist.%20%0A%0AEnergy%20to%20Earn%20%E2%80%94%20the%20world%27s%20first%20universal%20clean%20energy%20rewards%20protocol.%0A1%20KWh%20%3D%201%20%24WATT%20token.%20Automatically.%20No%20middleman.%0A%0ABorn%20in%20Africa.%20Built%20for%20the%20World.%20%E2%9A%A1%0A%0Ahttps%3A%2F%2Fwattprotocol.io%2Fref%2F{{REFERRAL_CODE}}"
+                <a href="https://twitter.com/intent/tweet?text=I%20just%20joined%20the%20%24WATT%20Protocol%20waitlist.%20%0A%0AEnergy%20to%20Earn%20%E2%80%94%20the%20world%27s%20first%20universal%20clean%20energy%20rewards%20protocol.%0A1%20KWh%20%3D%201%20%24WATT%20token.%20Automatically.%20No%20middleman.%0A%0ABorn%20in%20Africa.%20Built%20for%20the%20World.%20%E2%9A%A1%0A%0A{{REFERRAL_LINK_ENCODED}}"
                    style="display:inline-block;background:#F5C518;color:#080808;font-family:'Courier New',Courier,monospace;font-size:11px;font-weight:700;letter-spacing:0.1em;padding:13px 22px;text-decoration:none;text-transform:uppercase;">
                   Share on 𝕏 →
                 </a>
@@ -280,7 +280,7 @@
                 <a href="https://t.me/wattprotocol" style="display:inline-block;background:#0f0f0f;border:1px solid #1e1e1e;color:#aaa;font-family:'Courier New',Courier,monospace;font-size:10px;padding:9px 16px;text-decoration:none;">✈ Telegram</a>
               </td>
               <td style="padding-bottom:8px;">
-                <a href="https://wattprotocol.io" style="display:inline-block;background:#0f0f0f;border:1px solid #1e1e1e;color:#aaa;font-family:'Courier New',Courier,monospace;font-size:10px;padding:9px 16px;text-decoration:none;">🌐 wattprotocol.io</a>
+                <a href="{{SITE_URL}}" style="display:inline-block;background:#0f0f0f;border:1px solid #1e1e1e;color:#aaa;font-family:'Courier New',Courier,monospace;font-size:10px;padding:9px 16px;text-decoration:none;">🌐 {{SITE_URL_DISPLAY}}</a>
               </td>
             </tr>
           </table>
@@ -319,11 +319,11 @@
             </tr>
           </table>
           <p style="font-size:10px;color:#2a2a2a;line-height:1.75;margin:0;">
-            You're receiving this because you signed up at wattprotocol.io.<br>
+            You're receiving this because you signed up at {{SITE_URL_DISPLAY}}.<br>
             $WATT is a utility token. This email is not financial or investment advice.<br>
             <a href="{{UNSUBSCRIBE_URL}}" style="color:#3a3a3a;text-decoration:underline;">Unsubscribe</a>
             &nbsp;·&nbsp;
-            <a href="https://wattprotocol.io/privacy" style="color:#3a3a3a;text-decoration:underline;">Privacy Policy</a>
+            <a href="{{SITE_URL}}/privacy" style="color:#3a3a3a;text-decoration:underline;">Privacy Policy</a>
           </p>
         </td>
       </tr>

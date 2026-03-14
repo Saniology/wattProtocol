@@ -715,7 +715,19 @@ async function loadGeoMap() {
   try {
     const res  = await fetch(`${API}/api/admin/geo`, { headers: authHeaders() });
     if (res.status === 401) return;
-    const { countries, total } = await res.json();
+    const json = await res.json();
+    const { countries, total, migrationNeeded } = json;
+
+    if (migrationNeeded) {
+      document.getElementById('geoMap').innerHTML =
+        '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--gray4);font-family:var(--mono);font-size:11px;text-align:center;padding:24px">' +
+        '⚠ Run the geo migrations in Supabase first.<br><br>' +
+        '<code style="color:var(--yellow);font-size:10px">ALTER TABLE waitlist_users ADD COLUMN IF NOT EXISTS country_code TEXT;<br>' +
+        'ALTER TABLE waitlist_users ADD COLUMN IF NOT EXISTS country_name TEXT;<br>' +
+        'ALTER TABLE waitlist_users ADD COLUMN IF NOT EXISTS signup_lat FLOAT;<br>' +
+        'ALTER TABLE waitlist_users ADD COLUMN IF NOT EXISTS signup_lng FLOAT;</code></div>';
+      return;
+    }
 
     // Initialise Leaflet map once
     if (!_geoMap) {

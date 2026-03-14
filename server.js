@@ -112,6 +112,16 @@ const transporter = nodemailer.createTransport({
   },
 });
 
+// ── Dynamic site URL — reads from env or detects from incoming request ─────
+// In production:  set SITE_URL=https://wattprotocol.io in .env
+// In development: auto-detects http://localhost:3000
+function getSiteUrl(req) {
+  if (process.env.SITE_URL) return process.env.SITE_URL.replace(/\/$/, '');
+  const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'http');
+  const host  = (req.headers['x-forwarded-host']  || req.get('host') || 'localhost:3000');
+  return `${proto}://${host}`;
+}
+
 // ── IP → Geo helper ────────────────────────────────────────────────────────
 function getClientIp(req) {
   const forwarded = req.headers['x-forwarded-for'] || '';
@@ -153,21 +163,23 @@ const COUNTRY_NAMES = {
 };
 
 // ── Email builders ─────────────────────────────────────────────────────────
-function buildHtmlEmail(referralCode, referralLink, dashboardUrl) {
+function buildHtmlEmail(referralCode, referralLink, dashboardUrl, siteUrl) {
   const tplPath = path.join(__dirname, 'watt-waitlist-email.html');
-  const siteUrl = process.env.SITE_URL || 'https://wattprotocol.io';
+  const siteDisplay = siteUrl.replace(/^https?:\/\//, '');
   return fs.readFileSync(tplPath, 'utf8')
-    .replaceAll('{{REFERRAL_CODE}}',   referralCode)
-    .replaceAll('{{REFERRAL_LINK}}',   referralLink)
-    .replaceAll('{{DASHBOARD_URL}}',   dashboardUrl)
-    .replaceAll('{{UNSUBSCRIBE_URL}}', `${siteUrl}/unsubscribe`);
+    .replaceAll('{{REFERRAL_CODE}}',        referralCode)
+    .replaceAll('{{REFERRAL_LINK}}',        referralLink)
+    .replaceAll('{{REFERRAL_LINK_ENCODED}}', encodeURIComponent(referralLink))
+    .replaceAll('{{DASHBOARD_URL}}',        dashboardUrl)
+    .replaceAll('{{SITE_URL}}',             siteUrl)
+    .replaceAll('{{SITE_URL_DISPLAY}}',     siteDisplay)
+    .replaceAll('{{UNSUBSCRIBE_URL}}',      `${siteUrl}/unsubscribe`);
 }
 
-function buildPlainText(referralLink, dashboardUrl) {
-  const siteUrl = process.env.SITE_URL || 'https://wattprotocol.io';
+function buildPlainText(referralLink, dashboardUrl, siteUrl) {
   return `
 ⚡ YOU'RE IN — $WATT PROTOCOL
-wattprotocol.io
+${siteUrl}
 
 Welcome to the global clean energy revolution.
 
@@ -198,7 +210,7 @@ Year 2–3:    1M+ active meters worldwide
 FOLLOW THE BUILD
 Twitter:  https://twitter.com/WATTProtocol
 Telegram: https://t.me/wattprotocol
-Website:  https://wattprotocol.io
+Website:  ${siteUrl}
 
 ⚡ Born in Africa. Powered by the Sun. Built for Everyone.
 
@@ -208,7 +220,7 @@ Unsubscribe: ${siteUrl}/unsubscribe
 `.trim();
 }
 
-function buildMagicLinkHtml(dashboardUrl) {
+function buildMagicLinkHtml(dashboardUrl, siteUrl) {
   return `<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
@@ -248,7 +260,7 @@ function buildMagicLinkHtml(dashboardUrl) {
         <td style="background:#080808;padding:20px 40px;">
           <p style="font-size:10px;color:#2a2a2a;line-height:1.75;margin:0;">
             $WATT is a utility token. This is not financial advice.<br>
-            <a href="https://wattprotocol.io" style="color:#3a3a3a;">wattprotocol.io</a>
+            <a href="${siteUrl}" style="color:#3a3a3a;">${siteUrl.replace(/^https?:\/\//, '')}</a>
           </p>
         </td>
       </tr>
@@ -260,8 +272,7 @@ function buildMagicLinkHtml(dashboardUrl) {
 </body></html>`;
 }
 
-function buildVerificationEmail(verifyUrl) {
-  const siteUrl = process.env.SITE_URL || 'https://wattprotocol.io';
+function buildVerificationEmail(verifyUrl, siteUrl) {
   return `<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
@@ -301,7 +312,7 @@ function buildVerificationEmail(verifyUrl) {
         <td style="background:#080808;padding:20px 40px;">
           <p style="font-size:10px;color:#2a2a2a;line-height:1.75;margin:0;">
             If you didn't sign up for $WATT Protocol, ignore this email.<br>
-            <a href="${siteUrl}" style="color:#3a3a3a;">wattprotocol.io</a>
+            <a href="${siteUrl}" style="color:#3a3a3a;">${siteUrl.replace(/^https?:\/\//, '')}</a>
           </p>
         </td>
       </tr>
@@ -352,7 +363,7 @@ app.post('/api/waitlist', waitlistLimiter, async (req, res) => {
     .from('waitlist_users')
     .select('*', { count: 'exact', head: true });
 
-  const siteUrl        = process.env.SITE_URL || 'https://wattprotocol.io';
+  const siteUrl        = getSiteUrl(req);
   const referralCode   = nanoid(8).toUpperCase();
   const referralLink   = `${siteUrl}/ref/${referralCode}`;
   const dashboardUrl   = `${siteUrl}/dashboard.html?ref=${referralCode}`;
@@ -375,8 +386,8 @@ app.post('/api/waitlist', waitlistLimiter, async (req, res) => {
   const signupLng   = geoData?.ll?.[1] ?? null;
   console.log(`[WATT] Geo: ip=${clientIp} → ${countryName || 'unknown'}`);
 
-  // Insert user (unverified — awaiting email confirmation)
-  const { error: insertError } = await supabase
+  // Insert user — try with all new columns first, fall back to base columns if migration not run yet
+  let { error: insertError } = await supabase
     .from('waitlist_users')
     .insert([{
       email:              normalizedEmail,
@@ -391,6 +402,25 @@ app.post('/api/waitlist', waitlistLimiter, async (req, res) => {
       signup_lat:         signupLat,
       signup_lng:         signupLng,
     }]);
+
+  // If new columns don't exist yet (migrations not run), fall back to base fields
+  if (insertError) {
+    const isColumnError = insertError.message?.toLowerCase().includes('column')
+                       || insertError.code === '42703'; // PostgreSQL: undefined_column
+    if (isColumnError) {
+      console.warn('[WATT] New columns missing — falling back to base insert. Run migrations.sql!');
+      const { error: fallbackError } = await supabase
+        .from('waitlist_users')
+        .insert([{
+          email:           normalizedEmail,
+          referral_code:   referralCode,
+          referral_link:   referralLink,
+          referred_by:     cleanRef || null,
+          founding_member: foundingMember,
+        }]);
+      insertError = fallbackError;
+    }
+  }
 
   if (insertError) {
     console.error('[WATT] Supabase insert error:', insertError.message);
@@ -429,7 +459,7 @@ app.post('/api/waitlist', waitlistLimiter, async (req, res) => {
       from:    `"${process.env.FROM_NAME || '$WATT Protocol'}" <${process.env.FROM_EMAIL || process.env.SMTP_USER}>`,
       to:      normalizedEmail,
       subject: '⚡ Confirm your $WATT spot — one click to go',
-      html:    buildVerificationEmail(verifyUrl),
+      html:    buildVerificationEmail(verifyUrl, siteUrl),
       text:    `Confirm your $WATT Protocol waitlist spot:\n\n${verifyUrl}\n\nThis link expires in 24 hours.`,
     });
     console.log(`[WATT] ✓ Verification email sent: ${normalizedEmail}`);
@@ -443,7 +473,7 @@ app.post('/api/waitlist', waitlistLimiter, async (req, res) => {
 // ── GET /verify-email?token=xxx ────────────────────────────────────────────
 app.get('/verify-email', async (req, res) => {
   const token   = (req.query.token || '').trim();
-  const siteUrl = process.env.SITE_URL || 'https://wattprotocol.io';
+  const siteUrl = getSiteUrl(req);
 
   if (!token) return res.redirect('/?error=invalid-token');
 
@@ -481,8 +511,8 @@ app.get('/verify-email', async (req, res) => {
     from:    `"${process.env.FROM_NAME || '$WATT Protocol'}" <${process.env.FROM_EMAIL || process.env.SMTP_USER}>`,
     to:      user.email,
     subject: "⚡ You're in — $WATT Protocol. Energy to Earn.",
-    html:    buildHtmlEmail(user.referral_code, referralLink, dashboardUrl),
-    text:    buildPlainText(referralLink, dashboardUrl),
+    html:    buildHtmlEmail(user.referral_code, referralLink, dashboardUrl, siteUrl),
+    text:    buildPlainText(referralLink, dashboardUrl, siteUrl),
   };
   if (pdfContent) {
     mailOptions.attachments = [{
@@ -683,10 +713,10 @@ app.get('/api/stats', async (req, res) => {
 // ── GET /unsubscribe?email=... — one-click unsubscribe from emails ─────────
 app.get('/unsubscribe', async (req, res) => {
   const email = (req.query.email || '').toLowerCase().trim();
-  const siteUrl = process.env.SITE_URL || 'https://wattprotocol.io';
+  const siteUrl = getSiteUrl(req);
 
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    return res.send(`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Unsubscribe — $WATT Protocol</title><style>body{margin:0;background:#080808;color:#fff;font-family:'Inter',system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px}div{max-width:420px;text-align:center}h2{color:#ef4444;margin-bottom:12px}p{color:#888;font-size:14px;line-height:1.7}a{color:#f5e642}</style></head><body><div><h2>Invalid Link</h2><p>This unsubscribe link is invalid or expired.<br>Email us at <a href="mailto:hello@wattprotocol.io">hello@wattprotocol.io</a> to opt out.</p><p style="margin-top:24px"><a href="${siteUrl}">← Back to $WATT Protocol</a></p></div></body></html>`);
+    return res.send(`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Unsubscribe — $WATT Protocol</title><style>body{margin:0;background:#080808;color:#fff;font-family:'Inter',system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px}div{max-width:420px;text-align:center}h2{color:#ef4444;margin-bottom:12px}p{color:#888;font-size:14px;line-height:1.7}a{color:#f5e642}</style></head><body><div><h2>Invalid Link</h2><p>This unsubscribe link is invalid or expired.<br>Email us at <a href="mailto:${process.env.CONTACT_EMAIL || process.env.FROM_EMAIL || process.env.SMTP_USER}">${process.env.CONTACT_EMAIL || process.env.FROM_EMAIL || process.env.SMTP_USER}</a> to opt out.</p><p style="margin-top:24px"><a href="${siteUrl}">← Back to $WATT Protocol</a></p></div></body></html>`);
   }
 
   // Mark the user as unsubscribed (we store it in a watt_config key or just log it)
@@ -733,14 +763,14 @@ app.post('/api/send-dashboard-link', async (req, res) => {
     .maybeSingle();
 
   if (user) {
-    const siteUrl      = process.env.SITE_URL || 'https://wattprotocol.io';
+    const siteUrl      = getSiteUrl(req);
     const dashboardUrl = `${siteUrl}/dashboard.html?ref=${user.referral_code}`;
     try {
       await transporter.sendMail({
         from:    `"${process.env.FROM_NAME || '$WATT Protocol'}" <${process.env.FROM_EMAIL || process.env.SMTP_USER}>`,
         to:      email,
         subject: '⚡ Your $WATT Dashboard Link',
-        html:    buildMagicLinkHtml(dashboardUrl),
+        html:    buildMagicLinkHtml(dashboardUrl, siteUrl),
         text:    `Your $WATT dashboard: ${dashboardUrl}`,
       });
     } catch (err) {
@@ -788,7 +818,11 @@ app.get('/api/admin/geo', requireAdmin, async (req, res) => {
     .select('country_code, country_name, signup_lat, signup_lng')
     .not('country_code', 'is', null);
 
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) {
+    // Columns likely don't exist yet — return empty result so the dashboard doesn't crash
+    console.warn('[WATT] /api/admin/geo error (run migrations?):', error.message);
+    return res.json({ countries: [], total: 0, migrationNeeded: true });
+  }
 
   // Aggregate by country
   const map = {};
@@ -939,7 +973,7 @@ app.post('/api/admin/resend-email/:id', requireAdmin, async (req, res) => {
 
   if (!user) return res.status(404).json({ error: 'User not found.' });
 
-  const siteUrl      = process.env.SITE_URL || 'https://wattprotocol.io';
+  const siteUrl      = getSiteUrl(req);
   const dashboardUrl = `${siteUrl}/dashboard.html?ref=${user.referral_code}`;
 
   try {
@@ -947,7 +981,7 @@ app.post('/api/admin/resend-email/:id', requireAdmin, async (req, res) => {
       from:    `"${process.env.FROM_NAME || '$WATT Protocol'}" <${process.env.FROM_EMAIL || process.env.SMTP_USER}>`,
       to:      user.email,
       subject: '⚡ Your $WATT Dashboard Link',
-      html:    buildMagicLinkHtml(dashboardUrl),
+      html:    buildMagicLinkHtml(dashboardUrl, siteUrl),
       text:    `Your $WATT dashboard: ${dashboardUrl}`,
     });
     console.log(`[WATT] Admin resent dashboard email to ${user.email}`);
