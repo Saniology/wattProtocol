@@ -39,6 +39,15 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- 7. Geographic data for heatmap (captured from IP at signup)
+ALTER TABLE waitlist_users ADD COLUMN IF NOT EXISTS country_code TEXT;
+ALTER TABLE waitlist_users ADD COLUMN IF NOT EXISTS country_name TEXT;
+ALTER TABLE waitlist_users ADD COLUMN IF NOT EXISTS signup_lat   FLOAT;
+ALTER TABLE waitlist_users ADD COLUMN IF NOT EXISTS signup_lng   FLOAT;
+
+-- Index for fast aggregation by country
+CREATE INDEX IF NOT EXISTS idx_waitlist_country ON waitlist_users(country_code);
+
 -- 6. Backfill existing users as verified (they signed up before verification was added)
 --    IMPORTANT: Run this AFTER deploying the new server code, so existing users
 --    can still access their dashboards.

@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>$WATT Admin Dashboard</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
 :root {
   --black:  #080808;
@@ -116,6 +118,18 @@ body { background: var(--black); color: var(--white); font-family: 'Inter', syst
 .page-btn:disabled { opacity: 0.3; cursor: default; }
 .chart-range-btn.active { border-color: var(--yellow); color: var(--yellow); }
 
+/* ── Leaflet map dark theme overrides ── */
+.leaflet-container { background: #0e0e0e; font-family: var(--mono); }
+.leaflet-popup-content-wrapper { background: #111; border: 1px solid rgba(245,230,66,0.2); border-radius: 2px; box-shadow: 0 4px 20px rgba(0,0,0,0.6); color: #fff; }
+.leaflet-popup-tip { background: #111; }
+.leaflet-popup-content { margin: 12px 16px; font-size: 12px; }
+.leaflet-popup-content strong { color: var(--yellow); display: block; margin-bottom: 4px; }
+.geo-country-chip { background: var(--gray2); border: 1px solid var(--border); padding: 10px 14px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.geo-country-chip .name { font-size: 12px; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.geo-country-chip .count { font-family: var(--mono); font-size: 13px; color: var(--yellow); flex-shrink: 0; }
+.geo-country-chip .bar { height: 2px; background: var(--yellow); margin-top: 6px; transition: width 0.6s ease; }
+#geoMap .leaflet-attribution-flag { display: none !important; }
+
 /* ── Loading / empty ── */
 .loading-row td { text-align: center; color: var(--gray4); font-family: var(--mono); font-size: 11px; padding: 32px !important; }
 .flash { animation: flash 0.4s ease; }
@@ -213,6 +227,22 @@ body { background: var(--black); color: var(--white); font-family: 'Inter', syst
     </div>
     <div style="position:relative;height:200px;">
       <canvas id="signupChart"></canvas>
+    </div>
+  </div>
+
+  <!-- User Geography Map -->
+  <div class="section-title">User Geography</div>
+  <div class="panel" style="margin-bottom:32px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px;">
+      <span style="font-family:var(--mono);font-size:11px;color:var(--gray4)">Signup locations detected via IP · bubble size = user count</span>
+      <button class="page-btn" onclick="loadGeoMap()" style="font-size:9px;padding:6px 12px;">↺ Refresh</button>
+    </div>
+    <!-- Map container -->
+    <div id="geoMap" style="width:100%;height:400px;border:1px solid rgba(245,230,66,0.1);border-radius:2px;"></div>
+    <!-- Top countries table -->
+    <div style="margin-top:20px;">
+      <div style="font-family:var(--mono);font-size:9px;letter-spacing:0.25em;color:var(--gray4);text-transform:uppercase;margin-bottom:12px;">Top Countries</div>
+      <div id="geoCountryList" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;"></div>
     </div>
   </div>
 
@@ -394,7 +424,7 @@ let roadmapStages = [];
 
 // ── Boot ──────────────────────────────────────────────────────────────────
 (async function init() {
-  await Promise.all([ loadStats(), loadUsers(), loadChart(14), loadPageViews() ]);
+  await Promise.all([ loadStats(), loadUsers(), loadChart(14), loadPageViews(), loadGeoMap() ]);
 })();
 
 // ── Stats ─────────────────────────────────────────────────────────────────
@@ -677,6 +707,90 @@ function escHtml(s) {
 }
 
 // ── Signup trend chart ────────────────────────────────────────────────────
+// ── Geography Map ──────────────────────────────────────────────────────────
+let _geoMap = null;
+let _geoMarkers = [];
+
+async function loadGeoMap() {
+  try {
+    const res  = await fetch(`${API}/api/admin/geo`, { headers: authHeaders() });
+    if (res.status === 401) return;
+    const { countries, total } = await res.json();
+
+    // Initialise Leaflet map once
+    if (!_geoMap) {
+      _geoMap = L.map('geoMap', {
+        center: [15, 20], zoom: 2, minZoom: 1, maxZoom: 6,
+        zoomControl: true, scrollWheelZoom: false,
+      });
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        attribution: '© OpenStreetMap · © CARTO',
+        subdomains: 'abcd', maxZoom: 19,
+      }).addTo(_geoMap);
+    }
+
+    // Clear old markers
+    _geoMarkers.forEach(m => m.remove());
+    _geoMarkers = [];
+
+    if (!countries || !countries.length) {
+      document.getElementById('geoCountryList').innerHTML =
+        '<div style="color:var(--gray4);font-family:var(--mono);font-size:11px;padding:12px 0">No geo data yet — new signups will appear here.</div>';
+      return;
+    }
+
+    const maxCount = countries[0].count;
+
+    countries.forEach(c => {
+      if (!c.lat && !c.lng) return; // no coords for this country yet
+
+      const pct    = c.count / maxCount;
+      const radius = Math.max(8, Math.min(60, 8 + pct * 52)); // 8–60px
+      const opacity = 0.3 + pct * 0.5;
+
+      const circle = L.circleMarker([c.lat, c.lng], {
+        radius,
+        fillColor:   '#f5e642',
+        fillOpacity: opacity,
+        color:       '#f5e642',
+        weight:      1,
+        opacity:     0.8,
+      }).addTo(_geoMap);
+
+      circle.bindPopup(`
+        <strong>${c.name} (${c.code})</strong>
+        <div>👥 ${c.count.toLocaleString()} user${c.count !== 1 ? 's' : ''}</div>
+        <div style="color:#888;font-size:10px;margin-top:4px">${Math.round((c.count / total) * 100)}% of geolocated users</div>
+      `);
+
+      // Pulse effect for #1 country
+      if (c === countries[0]) {
+        circle.setStyle({ weight: 2, color: '#fff' });
+      }
+
+      _geoMarkers.push(circle);
+    });
+
+    // Render country chips
+    const listEl = document.getElementById('geoCountryList');
+    listEl.innerHTML = countries.slice(0, 20).map(c => {
+      const barW = Math.round((c.count / maxCount) * 100);
+      return `<div class="geo-country-chip">
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span class="name">${c.name}</span>
+            <span class="count">${c.count.toLocaleString()}</span>
+          </div>
+          <div class="bar" style="width:${barW}%"></div>
+        </div>
+      </div>`;
+    }).join('');
+
+  } catch(e) {
+    console.error('[WATT] Geo load error:', e);
+  }
+}
+
 // ── Page Views ─────────────────────────────────────────────────────────────
 async function loadPageViews() {
   try {

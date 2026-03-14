@@ -12,6 +12,9 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createClient } from '@supabase/supabase-js';
+import { createRequire } from 'module';
+const _require = createRequire(import.meta.url);
+const geoip    = _require('geoip-lite');
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -108,6 +111,46 @@ const transporter = nodemailer.createTransport({
     pass: process.env.SMTP_PASS,
   },
 });
+
+// ── IP → Geo helper ────────────────────────────────────────────────────────
+function getClientIp(req) {
+  const forwarded = req.headers['x-forwarded-for'] || '';
+  const raw = forwarded.split(',')[0].trim()
+    || req.headers['x-real-ip']
+    || req.socket.remoteAddress
+    || '';
+  return raw.replace(/^::ffff:/, ''); // strip IPv4-mapped IPv6 prefix
+}
+
+function geoFromIp(ip) {
+  if (!ip || ip === '127.0.0.1' || ip === '::1' || ip.startsWith('192.168') || ip.startsWith('10.')) {
+    return null; // localhost / private IP — no geo data
+  }
+  try { return geoip.lookup(ip); } catch { return null; }
+}
+
+// ISO 3166-1 alpha-2 → country name (common subset)
+const COUNTRY_NAMES = {
+  AF:'Afghanistan',AL:'Albania',DZ:'Algeria',AO:'Angola',AR:'Argentina',AU:'Australia',
+  AT:'Austria',AZ:'Azerbaijan',BD:'Bangladesh',BE:'Belgium',BJ:'Benin',BO:'Bolivia',
+  BR:'Brazil',BF:'Burkina Faso',BI:'Burundi',CM:'Cameroon',CA:'Canada',CF:'Central African Republic',
+  TD:'Chad',CL:'Chile',CN:'China',CO:'Colombia',CG:'Congo',CD:'DR Congo',
+  CI:"Côte d'Ivoire",HR:'Croatia',CU:'Cuba',CZ:'Czech Republic',DK:'Denmark',
+  EG:'Egypt',ET:'Ethiopia',FR:'France',GA:'Gabon',GM:'Gambia',DE:'Germany',
+  GH:'Ghana',GR:'Greece',GT:'Guatemala',GN:'Guinea',HN:'Honduras',HK:'Hong Kong',
+  HU:'Hungary',IN:'India',ID:'Indonesia',IR:'Iran',IQ:'Iraq',IE:'Ireland',
+  IL:'Israel',IT:'Italy',JP:'Japan',JO:'Jordan',KZ:'Kazakhstan',KE:'Kenya',
+  KW:'Kuwait',LB:'Lebanon',LY:'Libya',MY:'Malaysia',ML:'Mali',MX:'Mexico',
+  MA:'Morocco',MZ:'Mozambique',MM:'Myanmar',NP:'Nepal',NL:'Netherlands',
+  NZ:'New Zealand',NE:'Niger',NG:'Nigeria',NO:'Norway',OM:'Oman',PK:'Pakistan',
+  PE:'Peru',PH:'Philippines',PL:'Poland',PT:'Portugal',QA:'Qatar',RO:'Romania',
+  RU:'Russia',RW:'Rwanda',SA:'Saudi Arabia',SN:'Senegal',ZA:'South Africa',
+  SS:'South Sudan',ES:'Spain',LK:'Sri Lanka',SD:'Sudan',SE:'Sweden',CH:'Switzerland',
+  SY:'Syria',TW:'Taiwan',TZ:'Tanzania',TH:'Thailand',TN:'Tunisia',TR:'Turkey',
+  UG:'Uganda',UA:'Ukraine',AE:'United Arab Emirates',GB:'United Kingdom',
+  US:'United States',UZ:'Uzbekistan',VE:'Venezuela',VN:'Vietnam',YE:'Yemen',
+  ZM:'Zambia',ZW:'Zimbabwe',
+};
 
 // ── Email builders ─────────────────────────────────────────────────────────
 function buildHtmlEmail(referralCode, referralLink, dashboardUrl) {
@@ -323,6 +366,15 @@ app.post('/api/waitlist', waitlistLimiter, async (req, res) => {
   const verificationToken = nanoid(32);
   const verifyUrl = `${siteUrl}/verify-email?token=${verificationToken}`;
 
+  // Geo-locate from IP (best-effort — never blocks signup)
+  const clientIp  = getClientIp(req);
+  const geoData   = geoFromIp(clientIp);
+  const countryCode = geoData?.country || null;
+  const countryName = countryCode ? (COUNTRY_NAMES[countryCode] || countryCode) : null;
+  const signupLat   = geoData?.ll?.[0] ?? null;
+  const signupLng   = geoData?.ll?.[1] ?? null;
+  console.log(`[WATT] Geo: ip=${clientIp} → ${countryName || 'unknown'}`);
+
   // Insert user (unverified — awaiting email confirmation)
   const { error: insertError } = await supabase
     .from('waitlist_users')
@@ -334,6 +386,10 @@ app.post('/api/waitlist', waitlistLimiter, async (req, res) => {
       founding_member:    foundingMember,
       email_verified:     false,
       verification_token: verificationToken,
+      country_code:       countryCode,
+      country_name:       countryName,
+      signup_lat:         signupLat,
+      signup_lng:         signupLng,
     }]);
 
   if (insertError) {
@@ -723,6 +779,36 @@ app.get('/api/admin/pageviews', requireAdmin, async (req, res) => {
 
   if (error) return res.status(500).json({ error: error.message });
   return res.json({ pages: data || [] });
+});
+
+// ── GET /api/admin/geo — user distribution by country ─────────────────────
+app.get('/api/admin/geo', requireAdmin, async (req, res) => {
+  const { data, error } = await supabase
+    .from('waitlist_users')
+    .select('country_code, country_name, signup_lat, signup_lng')
+    .not('country_code', 'is', null);
+
+  if (error) return res.status(500).json({ error: error.message });
+
+  // Aggregate by country
+  const map = {};
+  for (const u of data || []) {
+    const code = u.country_code;
+    if (!map[code]) {
+      map[code] = { code, name: u.country_name || COUNTRY_NAMES[code] || code, count: 0, lats: [], lngs: [] };
+    }
+    map[code].count++;
+    if (u.signup_lat != null) map[code].lats.push(u.signup_lat);
+    if (u.signup_lng != null) map[code].lngs.push(u.signup_lng);
+  }
+
+  const avg = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
+
+  const countries = Object.values(map)
+    .map(c => ({ code: c.code, name: c.name, count: c.count, lat: avg(c.lats), lng: avg(c.lngs) }))
+    .sort((a, b) => b.count - a.count);
+
+  return res.json({ countries, total: (data || []).length });
 });
 
 // ═══════════════════════════════════════════════════════════════
