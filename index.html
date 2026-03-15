@@ -657,6 +657,31 @@
   </div>
 </section>
 
+<!-- EMAIL VERIFICATION MODAL -->
+<div id="verifyModal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.75);backdrop-filter:blur(4px);align-items:center;justify-content:center;">
+  <div style="background:#0f0f0f;border:1px solid var(--border);max-width:420px;width:calc(100% - 40px);padding:40px 36px;position:relative;">
+    <!-- accent bar -->
+    <div style="position:absolute;top:0;left:0;width:4px;height:100%;background:var(--yellow);"></div>
+    <!-- close -->
+    <button onclick="document.getElementById('verifyModal').style.display='none'"
+      style="position:absolute;top:16px;right:16px;background:none;border:none;color:var(--gray4);font-size:18px;line-height:1;cursor:pointer;">✕</button>
+
+    <p style="font-family:var(--font-mono);font-size:9px;letter-spacing:0.3em;text-transform:uppercase;color:var(--yellow);margin:0 0 12px;">Almost there</p>
+    <h3 style="font-size:22px;font-weight:700;margin:0 0 10px;color:var(--white);">Check your inbox 📬</h3>
+    <p style="font-size:13px;color:var(--gray5);line-height:1.7;margin:0 0 8px;">We sent a confirmation link to <strong id="verifyEmailDisplay" style="color:var(--white);"></strong>.</p>
+    <p style="font-size:13px;color:var(--gray5);line-height:1.7;margin:0 0 28px;">Click the link to secure your spot and claim your early-adopter $WATT bonus.</p>
+
+    <div style="background:rgba(245,230,66,0.06);border:1px solid rgba(245,230,66,0.15);padding:14px 16px;margin-bottom:28px;">
+      <p style="font-family:var(--font-mono);font-size:11px;color:var(--gray4);margin:0;line-height:1.6;">Didn't get it? Check your spam folder, or close this and try again.</p>
+    </div>
+
+    <button onclick="document.getElementById('verifyModal').style.display='none'"
+      style="width:100%;background:var(--yellow);color:var(--black);border:none;padding:15px 24px;font-family:var(--font-mono);font-size:11px;font-weight:700;letter-spacing:0.15em;text-transform:uppercase;cursor:pointer;transition:background 0.2s;">
+      Got it
+    </button>
+  </div>
+</div>
+
 <!-- DUPLICATE EMAIL MODAL -->
 <div id="existsModal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.75);backdrop-filter:blur(4px);align-items:center;justify-content:center;">
   <div style="background:#0f0f0f;border:1px solid var(--border);max-width:420px;width:calc(100% - 40px);padding:40px 36px;position:relative;">
@@ -858,12 +883,12 @@
         const data = await res.json();
 
         if (res.ok && data.success && data.requiresVerification) {
-          // Email verification required — show check inbox message
-          form.style.display    = 'none';
-          success.style.display = 'block';
-          success.innerHTML     = '📬 Check your inbox — click the confirmation link to secure your spot.';
-          note.textContent      = 'Didn\'t get it? Check spam, or try again.';
-          note.style.color      = 'var(--gray5)';
+          // Email verification required — show modal
+          document.getElementById('verifyEmailDisplay').textContent = email;
+          document.getElementById('verifyModal').style.display = 'flex';
+          btn.textContent = 'Join Now';
+          btn.disabled    = false;
+          input.disabled  = false;
         } else if (res.ok && data.success) {
           // Legacy / already-verified path
           form.style.display    = 'none';
@@ -898,9 +923,11 @@
     input.addEventListener('focus', () => { input.style.borderColor = ''; });
   })();
 
-  // Close modal on backdrop click
-  document.getElementById('existsModal').addEventListener('click', function(e) {
-    if (e.target === this) this.style.display = 'none';
+  // Close modals on backdrop click
+  ['existsModal', 'verifyModal'].forEach(id => {
+    document.getElementById(id).addEventListener('click', function(e) {
+      if (e.target === this) this.style.display = 'none';
+    });
   });
 
   function goToDashboard() {
