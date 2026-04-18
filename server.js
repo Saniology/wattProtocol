@@ -65,28 +65,30 @@ app.use((req, res, next) => {
 app.use(express.json());
 
 // ── Rate limiting ──────────────────────────────────────────────────────────
-// Waitlist signup: max 5 attempts per IP per 15 minutes
+const isDev = process.env.NODE_ENV !== 'production';
+
+// Waitlist signup: 5/15min in prod, relaxed in dev
 const waitlistLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 5,
+  max: isDev ? 100 : 5,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many signup attempts. Please try again in 15 minutes.' },
 });
 
-// Lookup / dashboard: max 20 per IP per 10 minutes
+// Lookup / dashboard: 20/10min in prod, relaxed in dev
 const lookupLimiter = rateLimit({
   windowMs: 10 * 60 * 1000,
-  max: 20,
+  max: isDev ? 500 : 20,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many requests. Please slow down.' },
 });
 
-// Admin login: max 10 attempts per IP per hour
+// Admin login: 10/hour in prod, relaxed in dev
 const adminLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
-  max: 10,
+  max: isDev ? 200 : 10,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many admin attempts. Try again in an hour.' },
@@ -163,7 +165,32 @@ const COUNTRY_NAMES = {
 };
 
 // ── Email builders ─────────────────────────────────────────────────────────
-function buildHtmlEmail(referralCode, referralLink, dashboardUrl, siteUrl) {
+function buildRoadmapHtml(stages) {
+  if (!stages || stages.length === 0) return '';
+  return stages.map((stage, i) => {
+    const num     = String(i + 1).padStart(2, '0');
+    const isFirst = i === 0;
+    const isLast  = i === stages.length - 1;
+    const numStyle = isFirst
+      ? 'background:#F5C518;color:#080808;'
+      : 'background:#1a1a00;border:1px solid #F5C518;color:#F5C518;';
+    const titleColor = '#fff';
+    const mb = isLast ? '' : 'margin-bottom:18px;';
+    return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="${mb}">
+            <tr>
+              <td width="44" valign="top" style="padding-right:14px;padding-top:1px;">
+                <div style="${numStyle}font-family:'Courier New',Courier,monospace;font-size:10px;font-weight:700;padding:6px 8px;text-align:center;">${num}</div>
+              </td>
+              <td>
+                <p style="font-weight:700;font-size:13px;color:${titleColor};margin:0 0 4px 0;">${stage.title || ''}${stage.timeline ? ` &nbsp;<span style="font-family:'Courier New',Courier,monospace;font-size:9px;color:#555;font-weight:400;">${stage.timeline}</span>` : ''}</p>
+                <p style="font-size:12px;color:#666;line-height:1.65;margin:0;">${stage.description || ''}</p>
+              </td>
+            </tr>
+          </table>`;
+  }).join('\n          ');
+}
+
+function buildHtmlEmail(referralCode, referralLink, dashboardUrl, siteUrl, roadmapStages) {
   const tplPath = path.join(__dirname, 'watt-waitlist-email.html');
   const siteDisplay = siteUrl.replace(/^https?:\/\//, '');
   return fs.readFileSync(tplPath, 'utf8')
@@ -173,7 +200,8 @@ function buildHtmlEmail(referralCode, referralLink, dashboardUrl, siteUrl) {
     .replaceAll('{{DASHBOARD_URL}}',        dashboardUrl)
     .replaceAll('{{SITE_URL}}',             siteUrl)
     .replaceAll('{{SITE_URL_DISPLAY}}',     siteDisplay)
-    .replaceAll('{{UNSUBSCRIBE_URL}}',      `${siteUrl}/unsubscribe`);
+    .replaceAll('{{UNSUBSCRIBE_URL}}',      `${siteUrl}/unsubscribe`)
+    .replaceAll('{{ROADMAP_ITEMS}}',        buildRoadmapHtml(roadmapStages));
 }
 
 function buildPlainText(referralLink, dashboardUrl, siteUrl) {
@@ -343,15 +371,20 @@ app.post('/api/waitlist', waitlistLimiter, async (req, res) => {
 
   const normalizedEmail = email.toLowerCase().trim();
 
-  // Check duplicate
-  const { data: existing } = await supabase
+  // Check duplicate — treat lookup errors as blocked (fail safe)
+  const { data: existing, error: lookupError } = await supabase
     .from('waitlist_users')
     .select('referral_code')
     .eq('email', normalizedEmail)
     .maybeSingle();
 
+  if (lookupError) {
+    console.error('[WATT] Duplicate check failed:', lookupError.message);
+    return res.status(500).json({ error: 'Could not verify your email. Please try again.' });
+  }
+
   if (existing) {
-    return res.status(409).json({ error: 'This email is already on the waitlist.' });
+    return res.json({ success: false, alreadyExists: true, referralCode: existing.referral_code });
   }
 
   // Load dynamic config
@@ -423,6 +456,19 @@ app.post('/api/waitlist', waitlistLimiter, async (req, res) => {
   }
 
   if (insertError) {
+    // 23505 = unique_violation — email already exists (race condition or missing pre-check)
+    const isDuplicate = insertError.code === '23505'
+                     || insertError.message?.toLowerCase().includes('duplicate')
+                     || insertError.message?.toLowerCase().includes('unique');
+    if (isDuplicate) {
+      console.warn(`[WATT] Duplicate blocked at insert level for: ${normalizedEmail}`);
+      const { data: existingUser } = await supabase
+        .from('waitlist_users')
+        .select('referral_code')
+        .eq('email', normalizedEmail)
+        .maybeSingle();
+      return res.json({ success: false, alreadyExists: true, referralCode: existingUser?.referral_code });
+    }
     console.error('[WATT] Supabase insert error:', insertError.message);
     return res.status(500).json({ error: 'Could not save your signup. Please try again.' });
   }
@@ -501,6 +547,11 @@ app.get('/verify-email', async (req, res) => {
   const dashboardUrl = `${siteUrl}/dashboard.html?ref=${user.referral_code}`;
   const referralLink = user.referral_link;
 
+  // Fetch admin config for dynamic roadmap
+  const cfg = await getConfig();
+  let roadmapStages = [];
+  try { roadmapStages = JSON.parse(cfg.roadmap || '[]'); } catch {}
+
   // Now send the full welcome email
   const pdfPath = path.join(__dirname, 'watt-protocol-whitepaper.pdf');
   let pdfContent;
@@ -511,7 +562,7 @@ app.get('/verify-email', async (req, res) => {
     from:    `"${process.env.FROM_NAME || '$WATT Protocol'}" <${process.env.FROM_EMAIL || process.env.SMTP_USER}>`,
     to:      user.email,
     subject: "⚡ You're in — $WATT Protocol. Energy to Earn.",
-    html:    buildHtmlEmail(user.referral_code, referralLink, dashboardUrl, siteUrl),
+    html:    buildHtmlEmail(user.referral_code, referralLink, dashboardUrl, siteUrl, roadmapStages),
     text:    buildPlainText(referralLink, dashboardUrl, siteUrl),
   };
   if (pdfContent) {

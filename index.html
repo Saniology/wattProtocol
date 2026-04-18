@@ -898,13 +898,11 @@
           setTimeout(() => {
             window.location.href = `dashboard.html?ref=${data.referralCode}`;
           }, 1800);
-        } else if (res.status === 409) {
+        } else if (data.alreadyExists) {
           // Show modal — account already exists
-          const email = input.value.trim();
           document.getElementById('existsEmailDisplay').textContent = email;
           document.getElementById('existsGoBtn').dataset.email = email;
-          const modal = document.getElementById('existsModal');
-          modal.style.display = 'flex';
+          document.getElementById('existsModal').style.display = 'flex';
           btn.textContent = 'Join Now';
           btn.disabled    = false;
           input.disabled  = false;
