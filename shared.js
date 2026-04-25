@@ -4,55 +4,64 @@
    ═══════════════════════════════════════════════════════ */
 
 (function() {
-  // ── Detect current page
   const path = window.location.pathname.split('/').pop() || 'index.html';
-
-  // ── Announcement banner (fetched from server, shown on all pages) ──────
   const _apiBase = window.WATT_API_BASE || document.documentElement.dataset.apiBase || '';
+  const supportsFinePointer = window.matchMedia('(pointer:fine)').matches;
+  const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const scheduleNonCritical = (fn) => {
+    if ('requestIdleCallback' in window) {
+      window.requestIdleCallback(() => fn(), { timeout: 700 });
+      return;
+    }
+    window.setTimeout(fn, 1);
+  };
 
-  // ── Privacy-first page view tracker (no cookies, no fingerprinting) ──────
-  fetch(`${_apiBase}/api/pageview`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ page: path || 'index.html' }),
-  }).catch(() => {/* silently ignore */});
+  function renderAnnouncement(message) {
+    const announcement = String(message || '').trim();
+    const el = document.getElementById('watt-announcement');
+    if (!el) return;
+    if (!announcement) {
+      el.style.display = 'none';
+      return;
+    }
+    el.textContent = announcement;
+    el.style.display = 'block';
+    const bannerH = el.offsetHeight;
+    const nav = document.getElementById('watt-nav');
+    const mob = document.getElementById('navMobile');
+    if (nav) nav.style.top = bannerH + 'px';
+    if (mob) mob.style.top = (bannerH + 72) + 'px';
+    document.body.style.paddingTop = bannerH + 'px';
+
+    const strip = document.getElementById('announcement-strip');
+    const stripText = strip?.querySelector('.announcement-strip-text');
+    if (strip && stripText) {
+      stripText.textContent = announcement;
+      strip.style.display = 'flex';
+    }
+  }
+
+  function sendPageView() {
+    const payload = JSON.stringify({ page: path || 'index.html' });
+    const url = `${_apiBase}/api/pageview`;
+    try {
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon(url, new Blob([payload], { type: 'application/json' }));
+        return;
+      }
+    } catch {}
+    fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: payload,
+      keepalive: true,
+    }).catch(() => {});
+  }
+
   document.body.insertAdjacentHTML('afterbegin',
     '<div id="watt-announcement" style="display:none;background:#f5e642;color:#080808;font-family:\'Courier New\',monospace;font-size:12px;font-weight:700;letter-spacing:0.08em;text-align:center;padding:10px 48px;position:fixed;top:0;left:0;right:0;z-index:1001;"></div>'
   );
-  fetch(`${_apiBase}/api/announcement`)
-    .then(r => r.ok ? r.json() : null)
-    .then(data => {
-      if (data && data.announcement && data.announcement.trim()) {
-        const el = document.getElementById('watt-announcement');
-        if (el) {
-          el.textContent = data.announcement.trim();
-          el.style.display = 'block';
-          // Push nav down so it sits below the banner
-          const bannerH = el.offsetHeight;
-          const nav = document.getElementById('watt-nav');
-          const mob = document.getElementById('navMobile');
-          if (nav) nav.style.top = bannerH + 'px';
-          if (mob) mob.style.top = (bannerH + 72) + 'px';
-          // Also add top padding to <body> so page content isn't hidden behind banner+nav
-          document.body.style.paddingTop = bannerH + 'px';
-        }
-        // Populate homepage announcement section if present
-        const strip = document.getElementById('announcement-strip');
-        if (strip && data.announcement && data.announcement.trim()) {
-          strip.querySelector('.announcement-strip-text').textContent = data.announcement.trim();
-          strip.style.display = 'flex';
-        }
-      }
-    })
-    .catch(() => {/* server not running — silently ignore */});
 
-  // ── Inject cursor
-  document.body.insertAdjacentHTML('afterbegin', `
-    <div id="watt-cursor"></div>
-    <div id="watt-cursor-ring"></div>
-  `);
-
-  // ── Inject Nav
   document.body.insertAdjacentHTML('afterbegin', `
     <nav id="watt-nav">
       <a href="index.html" class="nav-logo">
@@ -90,115 +99,162 @@
     </div>
   `);
 
-  // ── Inject Footer
-  document.body.insertAdjacentHTML('beforeend', `
-    <footer id="watt-footer">
-      <div class="footer-top">
-        <div>
-          <div class="footer-brand-logo" style="display:flex;align-items:center;gap:12px;"><svg width="40" height="40" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg"><defs><radialGradient id="dFt" cx="38%" cy="30%" r="75%"><stop offset="0%" stop-color="#FFF8CC"/><stop offset="28%" stop-color="#F5C518"/><stop offset="62%" stop-color="#D4920E"/><stop offset="100%" stop-color="#8A5500"/></radialGradient><mask id="mFt"><rect width="128" height="128" fill="white"/><path d="M73 20 L48 64 H66 L58 108 L82 60 H65 Z" fill="black"/></mask></defs><circle cx="64" cy="64" r="64" fill="#070400"/><circle cx="64" cy="64" r="56" fill="url(#dFt)" mask="url(#mFt)"/><path d="M73 20 L48 64 H66 L58 108 L82 60 H65 Z" fill="#070400"/><circle cx="64" cy="64" r="62" stroke="#F5C518" stroke-width="1.5" stroke-opacity="0.35" fill="none"/></svg><span>$WATT</span></div>
-          <p class="footer-brand-desc">A decentralized protocol rewarding individuals worldwide for generating renewable energy. Born in Africa. Built for the World.</p>
-          <div class="footer-socials">
-            <a class="footer-social" href="https://x.com/wattprotocol" target="_blank" rel="noopener" title="X / Twitter">𝕏</a>
-            <a class="footer-social" href="https://t.me/wattprotocol" target="_blank" rel="noopener" title="Telegram">✈</a>
-            <a class="footer-social" href="https://discord.gg/wattprotocol" target="_blank" rel="noopener" title="Discord">◈</a>
-            <a class="footer-social" href="https://linkedin.com/company/wattprotocol" target="_blank" rel="noopener" title="LinkedIn">in</a>
-            <a class="footer-social" href="https://instagram.com/wattprotocol" target="_blank" rel="noopener" title="Instagram">◻</a>
-            <a class="footer-social" href="https://youtube.com/@wattprotocol" target="_blank" rel="noopener" title="YouTube">▶</a>
+  const nav = document.getElementById('watt-nav');
+  const mobileNav = document.getElementById('navMobile');
+  const navBurger = document.getElementById('navBurger');
+
+  if (navBurger && mobileNav) {
+    navBurger.addEventListener('click', () => {
+      mobileNav.classList.toggle('open');
+    });
+  }
+
+  if (nav) {
+    let ticking = false;
+    const syncNav = () => {
+      nav.classList.toggle('scrolled', window.scrollY > 60);
+      ticking = false;
+    };
+    window.addEventListener('scroll', () => {
+      if (!ticking) {
+        ticking = true;
+        requestAnimationFrame(syncNav);
+      }
+    }, { passive: true });
+    syncNav();
+  }
+
+  try {
+    const cached = JSON.parse(localStorage.getItem('watt_announcement_cache') || 'null');
+    if (cached && cached.text && Date.now() - cached.time < 60_000) {
+      renderAnnouncement(cached.text);
+    }
+  } catch {}
+
+  scheduleNonCritical(() => {
+    fetch(`${_apiBase}/api/announcement`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        const text = data?.announcement?.trim() || '';
+        renderAnnouncement(text);
+        try {
+          localStorage.setItem('watt_announcement_cache', JSON.stringify({ text, time: Date.now() }));
+        } catch {}
+      })
+      .catch(() => {});
+  });
+
+  scheduleNonCritical(() => {
+    document.body.insertAdjacentHTML('beforeend', `
+      <footer id="watt-footer">
+        <div class="footer-top">
+          <div>
+            <div class="footer-brand-logo" style="display:flex;align-items:center;gap:12px;"><svg width="40" height="40" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg"><defs><radialGradient id="dFt" cx="38%" cy="30%" r="75%"><stop offset="0%" stop-color="#FFF8CC"/><stop offset="28%" stop-color="#F5C518"/><stop offset="62%" stop-color="#D4920E"/><stop offset="100%" stop-color="#8A5500"/></radialGradient><mask id="mFt"><rect width="128" height="128" fill="white"/><path d="M73 20 L48 64 H66 L58 108 L82 60 H65 Z" fill="black"/></mask></defs><circle cx="64" cy="64" r="64" fill="#070400"/><circle cx="64" cy="64" r="56" fill="url(#dFt)" mask="url(#mFt)"/><path d="M73 20 L48 64 H66 L58 108 L82 60 H65 Z" fill="#070400"/><circle cx="64" cy="64" r="62" stroke="#F5C518" stroke-width="1.5" stroke-opacity="0.35" fill="none"/></svg><span>$WATT</span></div>
+            <p class="footer-brand-desc">A decentralized protocol rewarding individuals worldwide for generating renewable energy. Born in Africa. Built for the World.</p>
+            <div class="footer-socials">
+              <a class="footer-social" href="https://x.com/wattprotocol" target="_blank" rel="noopener" title="X / Twitter">𝕏</a>
+              <a class="footer-social" href="https://t.me/wattprotocol" target="_blank" rel="noopener" title="Telegram">✈</a>
+              <a class="footer-social" href="https://discord.gg/wattprotocol" target="_blank" rel="noopener" title="Discord">◈</a>
+              <a class="footer-social" href="https://linkedin.com/company/wattprotocol" target="_blank" rel="noopener" title="LinkedIn">in</a>
+              <a class="footer-social" href="https://instagram.com/wattprotocol" target="_blank" rel="noopener" title="Instagram">◻</a>
+              <a class="footer-social" href="https://youtube.com/@wattprotocol" target="_blank" rel="noopener" title="YouTube">▶</a>
+            </div>
+          </div>
+          <div class="footer-col">
+            <div class="footer-col-title">Protocol</div>
+            <ul>
+              <li><a href="how-it-works.html">How It Works</a></li>
+              <li><a href="token.html">Tokenomics</a></li>
+              <li><a href="whitepaper.html">Whitepaper</a></li>
+              <li><a href="community.html">SDG Impact</a></li>
+            </ul>
+          </div>
+          <div class="footer-col">
+            <div class="footer-col-title">Company</div>
+            <ul>
+              <li><a href="about.html">About</a></li>
+              <li><a href="about.html#team">Team</a></li>
+              <li><a href="#">Press Kit</a></li>
+              <li><a href="#">Careers</a></li>
+            </ul>
+          </div>
+          <div class="footer-col">
+            <div class="footer-col-title">Resources</div>
+            <ul>
+              <li><a href="#">GitHub</a></li>
+              <li><a href="#">Documentation</a></li>
+              <li><a href="#">Grant Applications</a></li>
+              <li><a href="#">Contact</a></li>
+            </ul>
           </div>
         </div>
-        <div class="footer-col">
-          <div class="footer-col-title">Protocol</div>
-          <ul>
-            <li><a href="how-it-works.html">How It Works</a></li>
-            <li><a href="token.html">Tokenomics</a></li>
-            <li><a href="whitepaper.html">Whitepaper</a></li>
-            <li><a href="community.html">SDG Impact</a></li>
-          </ul>
+        <div class="footer-bottom">
+          <span class="footer-copy">© 2025 $WATT Protocol · Velion Global Technologies</span>
+          <div class="footer-live"><div class="footer-live-dot"></div> Building on Base Network</div>
+          <span class="footer-legal"><a href="privacy.html" style="color:inherit;text-decoration:none;">Privacy</a> · <a href="terms.html" style="color:inherit;text-decoration:none;">Terms</a> · Not Financial Advice</span>
         </div>
-        <div class="footer-col">
-          <div class="footer-col-title">Company</div>
-          <ul>
-            <li><a href="about.html">About</a></li>
-            <li><a href="about.html#team">Team</a></li>
-            <li><a href="#">Press Kit</a></li>
-            <li><a href="#">Careers</a></li>
-          </ul>
-        </div>
-        <div class="footer-col">
-          <div class="footer-col-title">Resources</div>
-          <ul>
-            <li><a href="#">GitHub</a></li>
-            <li><a href="#">Documentation</a></li>
-            <li><a href="#">Grant Applications</a></li>
-            <li><a href="#">Contact</a></li>
-          </ul>
-        </div>
-      </div>
-      <div class="footer-bottom">
-        <span class="footer-copy">© 2025 $WATT Protocol · Velion Global Technologies</span>
-        <div class="footer-live"><div class="footer-live-dot"></div> Building on Base Network</div>
-        <span class="footer-legal"><a href="privacy.html" style="color:inherit;text-decoration:none;">Privacy</a> · <a href="terms.html" style="color:inherit;text-decoration:none;">Terms</a> · Not Financial Advice</span>
-      </div>
-    </footer>
-  `);
-
-  // ── Cursor logic
-  const cur = document.getElementById('watt-cursor');
-  const ring = document.getElementById('watt-cursor-ring');
-  let mx=0,my=0,rx=0,ry=0;
-  document.addEventListener('mousemove', e => {
-    mx=e.clientX; my=e.clientY;
-    cur.style.left=mx+'px'; cur.style.top=my+'px';
-  });
-  function animRing(){
-    rx+=(mx-rx)*0.11; ry+=(my-ry)*0.11;
-    ring.style.left=rx+'px'; ring.style.top=ry+'px';
-    requestAnimationFrame(animRing);
-  }
-  animRing();
-  document.querySelectorAll('a,button,.card,.hover-target').forEach(el=>{
-    el.addEventListener('mouseenter',()=>{cur.classList.add('hover');ring.classList.add('hover');});
-    el.addEventListener('mouseleave',()=>{cur.classList.remove('hover');ring.classList.remove('hover');});
+      </footer>
+    `);
   });
 
-  // ── Nav scroll
-  const nav = document.getElementById('watt-nav');
-  window.addEventListener('scroll',()=>{
-    nav.classList.toggle('scrolled', window.scrollY > 60);
-  });
+  if (supportsFinePointer && !prefersReducedMotion) {
+    scheduleNonCritical(() => {
+      document.body.insertAdjacentHTML('afterbegin', `
+        <div id="watt-cursor"></div>
+        <div id="watt-cursor-ring"></div>
+      `);
+      const cur = document.getElementById('watt-cursor');
+      const ring = document.getElementById('watt-cursor-ring');
+      if (!cur || !ring) return;
+      let mx = 0;
+      let my = 0;
+      let rx = 0;
+      let ry = 0;
+      let active = false;
 
-  // ── Mobile nav
-  document.getElementById('navBurger').addEventListener('click',()=>{
-    document.getElementById('navMobile').classList.toggle('open');
-  });
+      document.addEventListener('mousemove', (e) => {
+        mx = e.clientX;
+        my = e.clientY;
+        cur.style.left = mx + 'px';
+        cur.style.top = my + 'px';
+        active = true;
+      }, { passive: true });
 
-  // ── Scroll reveal
-  const observer = new IntersectionObserver(entries=>{
-    entries.forEach((e,i)=>{
-      if(e.isIntersecting){
-        setTimeout(()=>e.target.classList.add('visible'), i*80);
-      }
+      const animRing = () => {
+        if (active) {
+          rx += (mx - rx) * 0.11;
+          ry += (my - ry) * 0.11;
+          ring.style.left = rx + 'px';
+          ring.style.top = ry + 'px';
+        }
+        requestAnimationFrame(animRing);
+      };
+      requestAnimationFrame(animRing);
+
+      document.querySelectorAll('a,button,.card,.hover-target').forEach((el) => {
+        el.addEventListener('mouseenter', () => { cur.classList.add('hover'); ring.classList.add('hover'); }, { passive: true });
+        el.addEventListener('mouseleave', () => { cur.classList.remove('hover'); ring.classList.remove('hover'); }, { passive: true });
+      });
     });
-  },{threshold:0.08});
-  document.querySelectorAll('.reveal').forEach(el=>observer.observe(el));
+  }
 
-  // ── Waitlist form handler (shared)
-  document.addEventListener('submit', e=>{
-    if(e.target.classList.contains('waitlist-form')){
-      e.preventDefault();
-      const input = e.target.querySelector('input[type="email"]');
-      const btn = e.target.querySelector('button');
-      const msg = e.target.nextElementSibling;
-      if(input && input.value.includes('@')){
-        btn.textContent = '⚡ You\'re In!';
-        btn.style.background = 'var(--green)';
-        btn.style.color = 'var(--black)';
-        if(msg) msg.style.display='block';
-        input.value='';
-        setTimeout(()=>{ btn.textContent='Join Now'; btn.style.background=''; btn.style.color=''; },4000);
-      }
-    }
-  });
+  if (!prefersReducedMotion) {
+    scheduleNonCritical(() => {
+      const observer = new IntersectionObserver((entries) => {
+        entries.forEach((entry, i) => {
+          if (entry.isIntersecting) {
+            setTimeout(() => entry.target.classList.add('visible'), i * 60);
+            observer.unobserve(entry.target);
+          }
+        });
+      }, { threshold: 0.08 });
+      document.querySelectorAll('.reveal').forEach((el) => observer.observe(el));
+    });
+  } else {
+    document.querySelectorAll('.reveal').forEach((el) => el.classList.add('visible'));
+  }
+
+  scheduleNonCritical(sendPageView);
 
 })();
 

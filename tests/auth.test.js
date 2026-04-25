@@ -217,7 +217,8 @@ test('user can sign in, request reset, and reset password', async () => {
     body: JSON.stringify({ email: 'newuser@watt.test', password: 'Password123!' }),
   });
   assert.equal(loginRes.status, 200);
-  assert.ok(getCookieValue(loginRes.headers.getSetCookie?.() || loginRes.headers.get('set-cookie'), 'watt_session'));
+  const loginCookie = getCookieValue(loginRes.headers.getSetCookie?.() || loginRes.headers.get('set-cookie'), 'watt_session');
+  assert.ok(loginCookie);
 
   const forgotRes = await fetch(`${baseUrl}/api/auth/forgot-password`, {
     method: 'POST',
@@ -228,12 +229,32 @@ test('user can sign in, request reset, and reset password', async () => {
   const resetMail = transporter.sent.at(-1);
   const resetToken = resetMail.text.match(/reset=([a-f0-9]+)/i)[1];
 
+  const statusRes = await fetch(`${baseUrl}/api/auth/reset-password-status?token=${resetToken}`);
+  const statusJson = await statusRes.json();
+  assert.equal(statusRes.status, 200);
+  assert.equal(statusJson.valid, true);
+
   const resetRes = await fetch(`${baseUrl}/api/auth/reset-password`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ token: resetToken, password: 'NewPass123!' }),
+    body: JSON.stringify({ token: resetToken, password: 'NewPass123!', confirmPassword: 'NewPass123!' }),
   });
+  const resetJson = await resetRes.json();
   assert.equal(resetRes.status, 200);
+  assert.match(resetJson.message, /sign in/i);
+  const resetCookie = getCookieValue(resetRes.headers.getSetCookie?.() || resetRes.headers.get('set-cookie'), 'watt_session');
+  assert.equal(resetCookie, '');
+  assert.equal(fakeSupabase.tables.auth_sessions.filter((s) => s.user_id === 1 && s.role === 'user').length, 0);
+
+  const confirmationMail = transporter.sent.at(-1);
+  assert.match(confirmationMail.subject, /password was changed/i);
+
+  const reloginRes = await fetch(`${baseUrl}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: 'newuser@watt.test', password: 'NewPass123!' }),
+  });
+  assert.equal(reloginRes.status, 200);
 });
 
 test('admin auth creates a session and audit log entry', async () => {

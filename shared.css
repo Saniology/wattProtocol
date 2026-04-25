@@ -35,6 +35,16 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+.cv-auto {
+  content-visibility: auto;
+  contain-intrinsic-size: 900px;
+}
+
+.cv-auto-light {
+  content-visibility: auto;
+  contain-intrinsic-size: 560px;
+}
+
 a { text-decoration: none; color: inherit; }
 img { display: block; max-width: 100%; }
 button { cursor: none; }

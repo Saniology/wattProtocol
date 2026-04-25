@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="referrer" content="no-referrer">
 <meta name="description" content="Your $WATT Protocol dashboard — view your waitlist position, referrals, and earned $WATT tokens.">
 <title>My Dashboard — $WATT Protocol</title>
 <!-- Open Graph -->
@@ -363,7 +364,7 @@
     <div class="db-two-col">
 
       <!-- Referral link panel -->
-      <div class="panel">
+      <div class="panel cv-auto-light">
         <span class="panel-label">Your Referral Link</span>
         <p class="panel-desc">Every person who signs up using your link and installs a WATT Meter earns you <strong style="color:var(--yellow)">500 $WATT</strong> at launch. No limit.</p>
         <div class="ref-box">
@@ -389,7 +390,7 @@
       </div>
 
       <!-- Perks panel -->
-      <div class="panel">
+      <div class="panel cv-auto-light">
         <span class="panel-label">Your Perks</span>
         <ul class="perk-list" id="perkList">
           <!-- populated by JS -->
@@ -402,7 +403,7 @@
     <div class="db-two-col">
 
       <!-- Account info -->
-      <div class="panel">
+      <div class="panel cv-auto-light">
         <span class="panel-label">Account Details</span>
         <div class="info-row">
           <span class="info-key">Email</span>
@@ -443,7 +444,7 @@
       </div>
 
       <!-- Community panel -->
-      <div class="panel">
+      <div class="panel cv-auto-light">
         <span class="panel-label">Join the Movement</span>
         <p class="panel-desc">Get build updates, talk directly to the founding team, and be first to know about hardware shipping dates.</p>
         <div class="community-row">
@@ -470,7 +471,7 @@
     </div>
 
     <!-- Roadmap -->
-    <div class="roadmap-panel">
+    <div class="roadmap-panel cv-auto-light">
       <div class="roadmap-header"><span>Launch Roadmap — Where We Are</span></div>
       <div id="roadmapRows"><!-- rendered by JS --></div>
     </div>
@@ -500,6 +501,7 @@
     </div>
     <div class="resend-form" id="resetForm" style="display:none;margin-top:12px;">
       <input type="password" id="resetPassword" placeholder="new password (min 8 chars)">
+      <input type="password" id="resetPasswordConfirm" placeholder="confirm new password">
       <button id="resetBtn" onclick="resetPassword()">Reset Password →</button>
     </div>
     <p id="resendNote"></p>
@@ -516,6 +518,13 @@
 <script>
 const API = window.WATT_API_BASE || document.documentElement.dataset.apiBase || '';
 let resetToken = '';
+const scheduleDashboardNonCritical = (fn) => {
+  if ('requestIdleCallback' in window) {
+    window.requestIdleCallback(() => fn(), { timeout: 700 });
+    return;
+  }
+  window.setTimeout(fn, 1);
+};
 
 // ── Roadmap ───────────────────────────────────────────────────────────────
 const DEFAULT_ROADMAP = [
@@ -665,20 +674,21 @@ function renderDashboard(data) {
   window._refLink = data.referralLink;
   document.getElementById('refLinkDisplay').textContent = data.referralLink;
 
-  // Generate QR code
-  const qrEl = document.getElementById('qrCanvas');
-  if (qrEl) {
-    qrEl.innerHTML = '';
+  scheduleDashboardNonCritical(() => {
+    const qrEl = document.getElementById('qrCanvas');
+    if (!qrEl) return;
+    qrEl.replaceChildren();
     if (typeof QRCode !== 'undefined') {
       new QRCode(qrEl, { text: data.referralLink, width: 84, height: 84, colorDark: '#080808', colorLight: '#ffffff', correctLevel: QRCode.CorrectLevel.M });
-    } else {
-      // Fallback: use a QR API
-      const img = document.createElement('img');
-      img.src = `https://api.qrserver.com/v1/create-qr-code/?size=84x84&data=${encodeURIComponent(data.referralLink)}`;
-      img.alt = 'QR code'; img.width = 84; img.height = 84;
-      qrEl.appendChild(img);
+      return;
     }
-  }
+    const img = document.createElement('img');
+    img.src = `https://api.qrserver.com/v1/create-qr-code/?size=84x84&data=${encodeURIComponent(data.referralLink)}`;
+    img.alt = 'QR code';
+    img.width = 84;
+    img.height = 84;
+    qrEl.appendChild(img);
+  });
 
   const tweet = encodeURIComponent(
     `I just joined the $WATT Protocol waitlist.\n\nEnergy to Earn — 1 KWh = 1 $WATT token. Automatically. No middleman.\nBorn in Africa. Built for the World. ⚡\n\n${data.referralLink}`
@@ -699,8 +709,33 @@ function showAuth(note = '') {
   document.getElementById('dashboardMain').style.display = 'none';
   document.getElementById('dashboardLoading').style.display = 'none';
   document.getElementById('dashboardResend').style.display = 'block';
+  document.getElementById('resetForm').style.display = 'none';
+  document.getElementById('resendPassword').style.display = '';
+  document.getElementById('resendBtn').style.display = '';
+  document.getElementById('authIntro').textContent = 'Sign in with the email and password you used when joining the waitlist.';
   document.getElementById('resendNote').textContent = note;
+  document.getElementById('resendNote').style.color = note ? '#ff4444' : '';
   document.getElementById('resendEmail').focus();
+}
+
+function showResetForm(message = '') {
+  document.getElementById('dashboardLoading').style.display = 'none';
+  document.getElementById('dashboardMain').style.display = 'none';
+  document.getElementById('dashboardResend').style.display = 'block';
+  document.getElementById('authIntro').textContent = 'Choose a new password to finish resetting your account.';
+  document.getElementById('resetForm').style.display = 'flex';
+  document.getElementById('resendPassword').style.display = 'none';
+  document.getElementById('resendBtn').style.display = 'none';
+  document.getElementById('resendNote').textContent = message;
+  document.getElementById('resendNote').style.color = message ? '#ff4444' : '';
+}
+
+async function validateResetToken(token) {
+  const res = await fetch(`${API}/api/auth/reset-password-status?token=${encodeURIComponent(token)}`);
+  const data = await res.json();
+  if (!res.ok || !data.valid) {
+    throw new Error(data.error || 'This reset link is invalid or expired.');
+  }
 }
 
 async function loadDashboard(ref = '') {
@@ -717,14 +752,17 @@ async function loadDashboard(ref = '') {
   resetToken = params.get('reset') || '';
   if (email) document.getElementById('resendEmail').value = decodeURIComponent(email);
   if (resetToken) {
-    document.getElementById('dashboardLoading').style.display = 'none';
-    document.getElementById('dashboardResend').style.display = 'block';
-    document.getElementById('authIntro').textContent = 'Choose a new password to finish resetting your account.';
-    document.getElementById('resetForm').style.display = 'flex';
-    document.getElementById('resendPassword').style.display = 'none';
-    document.getElementById('resendBtn').style.display = 'none';
-    document.getElementById('resetPassword').focus();
-    return;
+    try {
+      await validateResetToken(resetToken);
+      showResetForm('');
+      document.getElementById('resetPassword').focus();
+      return;
+    } catch (err) {
+      resetToken = '';
+      history.replaceState(null, '', 'dashboard.html');
+      showAuth(err.message || 'This reset link is invalid or expired.');
+      return;
+    }
   }
 
   try {
@@ -805,7 +843,7 @@ async function forgotPassword(event) {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Could not send reset link.');
-    noteEl.textContent = 'If that account exists, a reset link is on the way.';
+    noteEl.textContent = 'If that account exists, a reset link is on the way. Check your inbox and spam folder.';
     noteEl.style.color = 'var(--yellow)';
   } catch (err) {
     noteEl.textContent = err.message || 'Could not send reset link.';
@@ -815,36 +853,52 @@ async function forgotPassword(event) {
 
 async function resetPassword() {
   const password = document.getElementById('resetPassword').value;
+  const confirmPassword = document.getElementById('resetPasswordConfirm').value;
   const noteEl = document.getElementById('resendNote');
+  const btnEl = document.getElementById('resetBtn');
   if (!password || password.length < 8) {
     noteEl.textContent = 'Use at least 8 characters for your new password.';
     noteEl.style.color = '#ff4444';
     return;
   }
+  if (password !== confirmPassword) {
+    noteEl.textContent = 'Your password confirmation does not match.';
+    noteEl.style.color = '#ff4444';
+    return;
+  }
+  const orig = btnEl.textContent;
+  btnEl.disabled = true;
+  btnEl.textContent = 'Resetting...';
   try {
     const res = await fetch(`${API}/api/auth/reset-password`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token: resetToken, password }),
+      body: JSON.stringify({ token: resetToken, password, confirmPassword }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Password reset failed.');
     resetToken = '';
     history.replaceState(null, '', 'dashboard.html');
-    await loadDashboard();
+    document.getElementById('resetPassword').value = '';
+    document.getElementById('resetPasswordConfirm').value = '';
+    document.getElementById('resendPassword').value = '';
+    document.getElementById('resendEmail').focus();
+    showAuth(data.message || 'Your password has been reset. Please sign in with your new password.');
+    document.getElementById('resendNote').style.color = 'var(--yellow)';
   } catch (err) {
     noteEl.textContent = err.message || 'Password reset failed.';
     noteEl.style.color = '#ff4444';
+  } finally {
+    btnEl.disabled = false;
+    btnEl.textContent = orig;
   }
 }
 
 async function logoutDashboard() {
   await fetch(`${API}/api/auth/logout`, { method: 'POST' }).catch(() => {});
-  document.getElementById('resendPassword').style.display = '';
-  document.getElementById('resendBtn').style.display = '';
-  document.getElementById('resetForm').style.display = 'none';
-  document.getElementById('authIntro').textContent = 'Sign in with the email and password you used when joining the waitlist.';
   document.getElementById('resendPassword').value = '';
+  document.getElementById('resetPassword').value = '';
+  document.getElementById('resetPasswordConfirm').value = '';
   showAuth('');
 }
 

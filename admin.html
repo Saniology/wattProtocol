@@ -4,9 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>$WATT Admin Dashboard</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js" defer></script>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
 <style>
 :root {
   --black:  #080808;
@@ -236,7 +236,7 @@ body { background: var(--black); color: var(--white); font-family: 'Inter', syst
 
   <!-- Signups Trend Chart -->
   <div class="section-title">Signup Trend</div>
-  <div class="panel" style="margin-bottom:32px">
+  <div class="panel cv-auto-light" style="margin-bottom:32px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px;">
       <span style="font-family:var(--mono);font-size:11px;color:var(--gray4)">Daily new members</span>
       <div style="display:flex;gap:8px;">
@@ -252,7 +252,7 @@ body { background: var(--black); color: var(--white); font-family: 'Inter', syst
 
   <!-- User Geography Map -->
   <div class="section-title">User Geography</div>
-  <div class="panel" style="margin-bottom:32px">
+  <div class="panel cv-auto-light" style="margin-bottom:32px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px;">
       <span style="font-family:var(--mono);font-size:11px;color:var(--gray4)">Signup locations detected via IP · bubble size = user count</span>
       <button class="page-btn" onclick="loadGeoMap()" style="font-size:9px;padding:6px 12px;">↺ Refresh</button>
@@ -268,7 +268,7 @@ body { background: var(--black); color: var(--white); font-family: 'Inter', syst
 
   <!-- Page Views Analytics -->
   <div class="section-title">Page Views</div>
-  <div class="panel" style="margin-bottom:32px">
+  <div class="panel cv-auto-light" style="margin-bottom:32px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px;">
       <span style="font-family:var(--mono);font-size:11px;color:var(--gray4)">All-time views per page</span>
       <button class="page-btn" onclick="loadPageViews()" style="font-size:9px;padding:6px 12px;">↺ Refresh</button>
@@ -285,7 +285,7 @@ body { background: var(--black); color: var(--white); font-family: 'Inter', syst
 
   <!-- Recent + Top Referrers -->
   <div class="two-col">
-    <div class="panel">
+    <div class="panel cv-auto-light">
       <div class="section-title">Recent Signups</div>
       <table class="mini-table">
         <thead><tr>
@@ -298,7 +298,7 @@ body { background: var(--black); color: var(--white); font-family: 'Inter', syst
         </tbody>
       </table>
     </div>
-    <div class="panel">
+    <div class="panel cv-auto-light">
       <div class="section-title">Top Referrers</div>
       <table class="mini-table">
         <thead><tr>
@@ -316,7 +316,7 @@ body { background: var(--black); color: var(--white); font-family: 'Inter', syst
 
   <!-- Config Editor -->
   <div class="section-title">Dynamic Configuration</div>
-  <div class="panel" style="margin-bottom:32px">
+  <div class="panel cv-auto-light" style="margin-bottom:32px">
     <div class="config-grid">
       <div class="config-field">
         <label>Referral Reward ($WATT per referral)</label>
@@ -345,7 +345,7 @@ body { background: var(--black); color: var(--white); font-family: 'Inter', syst
 
   <!-- Launch Roadmap Editor -->
   <div class="section-title">Launch Roadmap</div>
-  <div class="panel" style="margin-bottom:32px">
+  <div class="panel cv-auto-light" style="margin-bottom:32px">
     <div id="rmList" class="rm-editor">
       <div class="rm-empty">Loading roadmap…</div>
     </div>
@@ -358,7 +358,7 @@ body { background: var(--black); color: var(--white); font-family: 'Inter', syst
 
   <!-- User Management -->
   <div class="section-title">Member Management</div>
-  <div class="panel">
+  <div class="panel cv-auto-light">
     <div class="users-toolbar">
       <input class="search-input" id="searchInput" type="email" placeholder="Search by email…" oninput="debounceSearch()">
       <span class="users-count" id="usersCount"></span>
@@ -430,6 +430,13 @@ body { background: var(--black); color: var(--white); font-family: 'Inter', syst
 })();
 
 const API = window.WATT_API_BASE || document.documentElement.dataset.apiBase || '';
+const scheduleAdminNonCritical = (fn) => {
+  if ('requestIdleCallback' in window) {
+    window.requestIdleCallback(() => fn(), { timeout: 800 });
+    return;
+  }
+  window.setTimeout(fn, 1);
+};
 
 function authHeaders() {
   return { 'Content-Type': 'application/json' };
@@ -467,7 +474,9 @@ async function loginAdmin() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Login failed.');
     showAdminApp(data.adminEmail || email);
-    await Promise.all([ loadStats(), loadUsers(), loadChart(14), loadPageViews(), loadGeoMap() ]);
+    await Promise.all([ loadStats(), loadUsers(), loadChart(14) ]);
+    scheduleAdminNonCritical(() => { loadPageViews(); });
+    scheduleAdminNonCritical(() => { loadGeoMap(); });
   } catch (error) {
     msg.textContent = error.message;
     msg.style.color = 'var(--red)';
@@ -500,7 +509,9 @@ let roadmapStages = [];
       return;
     }
     showAdminApp(data.adminEmail || 'Admin');
-    await Promise.all([ loadStats(), loadUsers(), loadChart(14), loadPageViews(), loadGeoMap() ]);
+    await Promise.all([ loadStats(), loadUsers(), loadChart(14) ]);
+    scheduleAdminNonCritical(() => { loadPageViews(); });
+    scheduleAdminNonCritical(() => { loadGeoMap(); });
   } catch {
     showAdminLogin('Could not verify your admin session.');
   }

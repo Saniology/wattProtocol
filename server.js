@@ -5,6 +5,7 @@
 
 import 'dotenv/config';
 import express from 'express';
+import compression from 'compression';
 import rateLimit from 'express-rate-limit';
 import nodemailer from 'nodemailer';
 import { nanoid } from 'nanoid';
@@ -49,15 +50,24 @@ const supabase = testHooks.supabase || createClient(
 // ── Dynamic config cache (60s TTL) ────────────────────────────────────────
 let _configCache = null;
 let _configTime  = 0;
+let _configPromise = null;
 
 async function getConfig() {
   if (_configCache && Date.now() - _configTime < 60_000) return _configCache;
-  const { data } = await supabase.from('watt_config').select('key, value');
-  if (data?.length) {
-    _configCache = Object.fromEntries(data.map(r => [r.key, r.value]));
-    _configTime  = Date.now();
+  if (_configPromise) return _configPromise;
+  _configPromise = (async () => {
+    const { data } = await supabase.from('watt_config').select('key, value');
+    if (data?.length) {
+      _configCache = Object.fromEntries(data.map(r => [r.key, r.value]));
+      _configTime  = Date.now();
+    }
+    return _configCache || {};
+  })();
+  try {
+    return await _configPromise;
+  } finally {
+    _configPromise = null;
   }
-  return _configCache || {};
 }
 
 function invalidateConfig() { _configCache = null; }
@@ -176,6 +186,26 @@ function clearSessionCookie(res) {
   res.setHeader('Set-Cookie', parts.join('; '));
 }
 
+function setShortCache(res, seconds = 60) {
+  res.setHeader('Cache-Control', `public, max-age=${seconds}, stale-while-revalidate=${seconds}`);
+}
+
+async function waitToMinimum(startTime, minimumMs = 400) {
+  const elapsed = Date.now() - startTime;
+  if (elapsed < minimumMs) {
+    await new Promise((resolve) => setTimeout(resolve, minimumMs - elapsed));
+  }
+}
+
+async function invalidateUserSessions(userId) {
+  if (!userId) return;
+  await supabase
+    .from('auth_sessions')
+    .delete()
+    .eq('user_id', userId)
+    .eq('role', 'user');
+}
+
 async function createSession({ role, userId = null, adminEmail = null }) {
   const token = createSignedToken(32);
   const tokenHash = hashSecret(token);
@@ -217,6 +247,10 @@ async function getSessionFromRequest(req) {
 }
 
 async function attachSession(req, _res, next) {
+  if (!String(req.headers.cookie || '').includes(`${SESSION_COOKIE_NAME}=`)) {
+    req.session = null;
+    return next();
+  }
   try {
     req.session = await getSessionFromRequest(req);
   } catch (error) {
@@ -308,7 +342,13 @@ app.use((req, res, next) => {
 });
 
 app.use(express.json());
-app.use(attachSession);
+app.use(compression({
+  threshold: 1024,
+  filter: (req, res) => {
+    if (req.headers['x-no-compression']) return false;
+    return compression.filter(req, res);
+  },
+}));
 
 // ── Rate limiting ──────────────────────────────────────────────────────────
 const isDev = process.env.NODE_ENV !== 'production';
@@ -371,7 +411,21 @@ app.get('/sw.js', (_req, res) => {
   });
 });
 
-app.use(express.static(__dirname));
+app.use(express.static(__dirname, {
+  etag: true,
+  maxAge: '10m',
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-cache');
+      return;
+    }
+    if (/\.(css|js|svg|png|jpg|jpeg|webp|ico|pdf)$/i.test(filePath)) {
+      res.setHeader('Cache-Control', 'public, max-age=600, stale-while-revalidate=86400');
+    }
+  },
+}));
+
+app.use(attachSession);
 
 // ── SMTP transporter ───────────────────────────────────────────────────────
 const transporter = testHooks.transporter || nodemailer.createTransport({
@@ -652,6 +706,31 @@ function buildResetPasswordEmail(resetUrl, siteUrl) {
 </body></html>`;
 }
 
+function buildPasswordResetConfirmationEmail(siteUrl) {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Your $WATT password was changed</title></head>
+<body style="margin:0;padding:0;background:#080808;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;color:#fff;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#080808;padding:40px 16px;">
+<tr><td align="center">
+<table role="presentation" width="520" cellpadding="0" cellspacing="0" style="max-width:520px;width:100%;">
+  <tr><td style="background:#0f0f0f;padding:18px 24px;border-left:4px solid #f5e642;">
+    <span style="font-family:'Courier New',monospace;font-size:11px;font-weight:700;color:#f5e642;letter-spacing:0.18em;">$WATT PROTOCOL</span>
+  </td></tr>
+  <tr><td style="background:#111;padding:40px;border-left:4px solid #f5e642;">
+    <p style="font-family:'Courier New',monospace;font-size:10px;letter-spacing:0.35em;color:#f5e642;text-transform:uppercase;margin:0 0 14px;">SECURITY NOTICE</p>
+    <h1 style="font-size:28px;font-weight:700;line-height:1.2;margin:0 0 20px;color:#fff;">Your password<br><span style="color:#f5e642;">was updated.</span></h1>
+    <p style="font-size:15px;color:#888;line-height:1.8;margin:0 0 18px;">This email confirms that your $WATT password was changed successfully.</p>
+    <p style="font-size:14px;color:#888;line-height:1.8;margin:0;">If you did not make this change, reset your password again immediately and contact support.</p>
+    <p style="margin:28px 0 0;"><a href="${siteUrl}/dashboard.html" style="display:inline-block;background:#f5e642;color:#080808;font-family:'Courier New',monospace;font-size:12px;font-weight:700;letter-spacing:0.15em;text-transform:uppercase;padding:14px 28px;text-decoration:none;">SIGN IN →</a></p>
+  </td></tr>
+</table>
+</td></tr>
+</table>
+</body></html>`;
+}
+
 // ── GET /ref/:code — referral link redirect ────────────────────────────────
 app.get('/ref/:code', (req, res) => {
   const code = (req.params.code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -924,10 +1003,12 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
 
 // ── POST /api/auth/forgot-password ────────────────────────────────────────
 app.post('/api/auth/forgot-password', forgotPasswordLimiter, async (req, res) => {
+  const startedAt = Date.now();
   const email = normalizeEmail(req.body?.email);
   const siteUrl = getSiteUrl(req);
 
   if (hasHoneypot(req)) {
+    await waitToMinimum(startedAt);
     return res.json({ success: true });
   }
   if (!isValidEmail(email)) {
@@ -967,18 +1048,14 @@ app.post('/api/auth/forgot-password', forgotPasswordLimiter, async (req, res) =>
     }
   }
 
+  await waitToMinimum(startedAt);
   return res.json({ success: true });
 });
 
-// ── POST /api/auth/reset-password ─────────────────────────────────────────
-app.post('/api/auth/reset-password', forgotPasswordLimiter, async (req, res) => {
-  const token = String(req.body?.token || '').trim();
-  const password = String(req.body?.password || '');
-
-  if (!token) return res.status(400).json({ error: 'Reset token required.' });
-  if (!password || password.length < 8) {
-    return res.status(400).json({ error: 'Please choose a password with at least 8 characters.' });
-  }
+// ── GET /api/auth/reset-password-status?token=... ─────────────────────────
+app.get('/api/auth/reset-password-status', forgotPasswordLimiter, async (req, res) => {
+  const token = String(req.query.token || '').trim();
+  if (!token) return res.status(400).json({ valid: false, error: 'Reset token required.' });
 
   const tokenHash = hashSecret(token);
   const { data: user } = await supabase
@@ -987,8 +1064,44 @@ app.post('/api/auth/reset-password', forgotPasswordLimiter, async (req, res) => 
     .eq('reset_token', tokenHash)
     .maybeSingle();
 
+  const valid = Boolean(
+    user
+    && user.reset_token_expires_at
+    && new Date(user.reset_token_expires_at).getTime() > Date.now()
+  );
+
+  return res.json({
+    valid,
+    error: valid ? null : 'This reset link is invalid or expired.',
+  });
+});
+
+// ── POST /api/auth/reset-password ─────────────────────────────────────────
+app.post('/api/auth/reset-password', forgotPasswordLimiter, async (req, res) => {
+  const token = String(req.body?.token || '').trim();
+  const password = String(req.body?.password || '');
+  const confirmPassword = String(req.body?.confirmPassword || '');
+
+  if (!token) return res.status(400).json({ error: 'Reset token required.' });
+  if (!password || password.length < 8) {
+    return res.status(400).json({ error: 'Please choose a password with at least 8 characters.' });
+  }
+  if (!confirmPassword || password !== confirmPassword) {
+    return res.status(400).json({ error: 'Your password confirmation does not match.' });
+  }
+
+  const tokenHash = hashSecret(token);
+  const { data: user } = await supabase
+    .from('waitlist_users')
+    .select('id, email, password_hash, reset_token_expires_at')
+    .eq('reset_token', tokenHash)
+    .maybeSingle();
+
   if (!user || !user.reset_token_expires_at || new Date(user.reset_token_expires_at).getTime() <= Date.now()) {
     return res.status(400).json({ error: 'This reset link is invalid or expired.' });
+  }
+  if (user.password_hash && verifySecret(password, user.password_hash)) {
+    return res.status(400).json({ error: 'Choose a password you have not used for this account.' });
   }
 
   await supabase
@@ -1000,9 +1113,26 @@ app.post('/api/auth/reset-password', forgotPasswordLimiter, async (req, res) => 
     })
     .eq('id', user.id);
 
-  const sessionToken = await createSession({ role: 'user', userId: user.id });
-  setSessionCookie(res, sessionToken);
-  return res.json({ success: true });
+  await invalidateUserSessions(user.id);
+  clearSessionCookie(res);
+
+  try {
+    await sendManagedMail({
+      to: user.email,
+      subject: '⚡ Your $WATT password was changed',
+      html: buildPasswordResetConfirmationEmail(getSiteUrl(req)),
+      text: 'Your $WATT password was changed successfully. If this was not you, reset it again immediately and contact support.',
+      transactional: true,
+      siteUrl: getSiteUrl(req),
+    });
+  } catch (err) {
+    console.error('[WATT] Password reset confirmation email error:', err.message);
+  }
+
+  return res.json({
+    success: true,
+    message: 'Your password has been reset. Please sign in with your new password.',
+  });
 });
 
 // ── POST /api/auth/logout ─────────────────────────────────────────────────
@@ -1182,6 +1312,7 @@ app.get('/api/leaderboard', async (req, res) => {
 
 // ── GET /api/stats — public, no auth required ─────────────────────────────
 app.get('/api/stats', async (req, res) => {
+  setShortCache(res, 60);
   const [{ count: total }, cfg] = await Promise.all([
     supabase.from('waitlist_users').select('*', { count: 'exact', head: true }),
     getConfig(),
@@ -1227,12 +1358,14 @@ app.get('/unsubscribe', async (req, res) => {
 
 // ── GET /api/announcement — public, no auth required ──────────────────────
 app.get('/api/announcement', async (req, res) => {
+  setShortCache(res, 60);
   const cfg = await getConfig();
   return res.json({ announcement: cfg.announcement || '' });
 });
 
 // ── GET /api/roadmap — public, no auth required ────────────────────────────
 app.get('/api/roadmap', async (req, res) => {
+  setShortCache(res, 60);
   const cfg = await getConfig();
   let stages = [];
   try { stages = JSON.parse(cfg.roadmap || '[]'); } catch {}
@@ -1276,18 +1409,22 @@ app.post('/api/send-dashboard-link', emailActionLimiter, async (req, res) => {
 app.post('/api/pageview', async (req, res) => {
   const page = (req.body?.page || '').slice(0, 120).replace(/[^a-zA-Z0-9/_.-]/g, '');
   if (!page) return res.sendStatus(204);
+  res.setHeader('Cache-Control', 'no-store');
+  res.sendStatus(204);
 
-  // Upsert: increment views for this page
-  try {
-    const { error } = await supabase.rpc('increment_page_view', { p_page: page });
-    if (error) {
-      // Fallback if RPC not created yet — direct upsert (less atomic but safe)
-      await supabase.from('page_views')
-        .upsert({ page, views: 1, updated_at: new Date().toISOString() }, { onConflict: 'page' });
-    }
-  } catch { /* ignore analytics errors — never crash the server */ }
-
-  return res.sendStatus(204);
+  // Upsert asynchronously so analytics never slow the response path.
+  Promise.resolve()
+    .then(async () => {
+      try {
+        const { error } = await supabase.rpc('increment_page_view', { p_page: page });
+        if (error) {
+          await supabase.from('page_views')
+            .upsert({ page, views: 1, updated_at: new Date().toISOString() }, { onConflict: 'page' });
+        }
+      } catch {
+        // ignore analytics errors — never crash the server
+      }
+    });
 });
 
 // ── GET /api/admin/pageviews — top pages by views ─────────────────────────
