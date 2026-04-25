@@ -286,7 +286,7 @@
 <script src="shared.js"></script>
 <script>
 (function() {
-  const _apiBase = window.location.port === '3000' ? '' : 'http://localhost:3000';
+  const _apiBase = window.WATT_API_BASE || document.documentElement.dataset.apiBase || '';
   const medals   = ['🥇', '🥈', '🥉'];
   const rowClass = ['top1', 'top2', 'top3'];
 
@@ -301,27 +301,38 @@
         return;
       }
 
-      body.innerHTML = data.leaders.map(l => {
+      body.replaceChildren(...data.leaders.map((l) => {
         const rankClass = l.rank <= 3 ? ['gold','silver','bronze'][l.rank-1] : '';
-        const trClass   = l.rank <= 3 ? rowClass[l.rank-1] : '';
-        const rankHTML  = l.rank <= 3
-          ? `<span class="lb-medal">${medals[l.rank-1]}</span>`
-          : `<span class="lb-rank ${rankClass}">${l.rank}</span>`;
-        const founding  = l.foundingMember ? `<span class="lb-founding">Founder</span>` : '';
+        const trClass = l.rank <= 3 ? rowClass[l.rank-1] : '';
+        const tr = document.createElement('tr');
+        const rankTd = document.createElement('td');
+        const userTd = document.createElement('td');
+        const refsTd = document.createElement('td');
+        const wattTd = document.createElement('td');
+        const rankWrap = document.createElement('div');
+        const email = document.createElement('span');
 
-        return `<tr class="lb-row ${trClass}">
-          <td><div class="lb-rank ${rankClass}">${rankHTML}</div></td>
-          <td><span class="lb-email">${l.maskedEmail}</span>${founding}</td>
-          <td>
-            <span class="lb-count">${l.referrals.toLocaleString()}</span>
-            <span class="lb-count-label">referrals</span>
-          </td>
-          <td class="hide-mobile">
-            <span class="lb-watt">${l.wattEarned.toLocaleString()} <span style="color:var(--yellow);font-size:14px">$WATT</span></span>
-            <span class="lb-watt-label">at launch</span>
-          </td>
-        </tr>`;
-      }).join('');
+        tr.className = `lb-row ${trClass}`.trim();
+        rankWrap.className = `lb-rank ${rankClass}`.trim();
+        rankWrap.textContent = l.rank <= 3 ? medals[l.rank - 1] : String(l.rank);
+        rankTd.appendChild(rankWrap);
+
+        email.className = 'lb-email';
+        email.textContent = l.maskedEmail;
+        userTd.appendChild(email);
+        if (l.foundingMember) {
+          const founder = document.createElement('span');
+          founder.className = 'lb-founding';
+          founder.textContent = 'Founder';
+          userTd.appendChild(founder);
+        }
+
+        refsTd.innerHTML = `<span class="lb-count">${l.referrals.toLocaleString()}</span><span class="lb-count-label">referrals</span>`;
+        wattTd.className = 'hide-mobile';
+        wattTd.innerHTML = `<span class="lb-watt">${l.wattEarned.toLocaleString()} <span style="color:var(--yellow);font-size:14px">$WATT</span></span><span class="lb-watt-label">at launch</span>`;
+        tr.append(rankTd, userTd, refsTd, wattTd);
+        return tr;
+      }));
 
       document.getElementById('lbRefreshNote').textContent =
         'Updated ' + new Date().toLocaleTimeString();

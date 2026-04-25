@@ -8,7 +8,7 @@
   const path = window.location.pathname.split('/').pop() || 'index.html';
 
   // ── Announcement banner (fetched from server, shown on all pages) ──────
-  const _apiBase = window.location.port === '3000' ? '' : 'http://localhost:3000';
+  const _apiBase = window.WATT_API_BASE || document.documentElement.dataset.apiBase || '';
 
   // ── Privacy-first page view tracker (no cookies, no fingerprinting) ──────
   fetch(`${_apiBase}/api/pageview`, {
@@ -250,13 +250,22 @@
 
   window.wattToast = function(message, type = 'info', duration = 4000) {
     const toast = document.createElement('div');
+    const bar = document.createElement('div');
+    const icon = document.createElement('span');
+    const msg = document.createElement('span');
+    const close = document.createElement('button');
+
     toast.className = `watt-toast ${type}`;
-    toast.innerHTML = `
-      <div class="watt-toast-bar"></div>
-      <span class="watt-toast-icon">${icons[type] || '⚡'}</span>
-      <span class="watt-toast-msg">${message}</span>
-      <button class="watt-toast-close" aria-label="Dismiss">✕</button>
-    `;
+    bar.className = 'watt-toast-bar';
+    icon.className = 'watt-toast-icon';
+    icon.textContent = icons[type] || '⚡';
+    msg.className = 'watt-toast-msg';
+    msg.textContent = String(message || '');
+    close.className = 'watt-toast-close';
+    close.setAttribute('aria-label', 'Dismiss');
+    close.textContent = '✕';
+
+    toast.append(bar, icon, msg, close);
     container.appendChild(toast);
 
     // Trigger entrance animation
@@ -268,7 +277,7 @@
       setTimeout(() => toast.remove(), 350);
     };
 
-    toast.querySelector('.watt-toast-close').addEventListener('click', dismiss);
+    close.addEventListener('click', dismiss);
     if (duration > 0) setTimeout(dismiss, duration);
     return dismiss;
   };
@@ -324,15 +333,32 @@
   document.head.appendChild(style);
 
   const banner = document.createElement('div');
+  const text = document.createElement('p');
+  const code = document.createElement('code');
+  const link = document.createElement('a');
+  const buttons = document.createElement('div');
+  const decline = document.createElement('button');
+  const accept = document.createElement('button');
+
   banner.id = 'watt-consent';
-  banner.innerHTML = `
-    <p>We use a single cookie (<code style="color:#fff;font-size:11px">watt_ref</code>) to track referral codes for 7 days so that referral credit is correctly attributed. No advertising or third-party tracking.
-    <a href="privacy.html"> Learn more →</a></p>
-    <div id="watt-consent-btns">
-      <button id="watt-consent-decline">Decline</button>
-      <button id="watt-consent-accept">Accept Cookies</button>
-    </div>
-  `;
+  code.style.color = '#fff';
+  code.style.fontSize = '11px';
+  code.textContent = 'watt_ref';
+  link.href = 'privacy.html';
+  link.textContent = ' Learn more →';
+  text.append(
+    'We use a single cookie (',
+    code,
+    ') to track referral codes for 7 days so that referral credit is correctly attributed. No advertising or third-party tracking.',
+    link
+  );
+  buttons.id = 'watt-consent-btns';
+  decline.id = 'watt-consent-decline';
+  decline.textContent = 'Decline';
+  accept.id = 'watt-consent-accept';
+  accept.textContent = 'Accept Cookies';
+  buttons.append(decline, accept);
+  banner.append(text, buttons);
   document.body.appendChild(banner);
   requestAnimationFrame(() => requestAnimationFrame(() => banner.classList.add('show')));
 
@@ -342,8 +368,8 @@
     setTimeout(() => banner.remove(), 400);
   };
 
-  document.getElementById('watt-consent-accept').addEventListener('click', () => dismiss(true));
-  document.getElementById('watt-consent-decline').addEventListener('click', () => dismiss(false));
+  accept.addEventListener('click', () => dismiss(true));
+  decline.addEventListener('click', () => dismiss(false));
 })();
 
 /* ═══════════════════════════════════════════════════════

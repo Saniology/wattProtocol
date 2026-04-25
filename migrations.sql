@@ -16,6 +16,18 @@ ALTER TABLE waitlist_users
 ALTER TABLE waitlist_users
   ADD COLUMN IF NOT EXISTS verification_token TEXT;
 
+ALTER TABLE waitlist_users
+  ADD COLUMN IF NOT EXISTS verification_expires_at TIMESTAMPTZ;
+
+ALTER TABLE waitlist_users
+  ADD COLUMN IF NOT EXISTS password_hash TEXT;
+
+ALTER TABLE waitlist_users
+  ADD COLUMN IF NOT EXISTS reset_token TEXT;
+
+ALTER TABLE waitlist_users
+  ADD COLUMN IF NOT EXISTS reset_token_expires_at TIMESTAMPTZ;
+
 -- 4. Add page_views table for built-in analytics
 CREATE TABLE IF NOT EXISTS page_views (
   id         BIGSERIAL PRIMARY KEY,
@@ -47,6 +59,33 @@ ALTER TABLE waitlist_users ADD COLUMN IF NOT EXISTS signup_lng   FLOAT;
 
 -- Index for fast aggregation by country
 CREATE INDEX IF NOT EXISTS idx_waitlist_country ON waitlist_users(country_code);
+
+CREATE TABLE IF NOT EXISTS auth_sessions (
+  id           BIGSERIAL PRIMARY KEY,
+  role         TEXT        NOT NULL,
+  user_id      BIGINT      NULL,
+  admin_email  TEXT        NULL,
+  token_hash   TEXT        NOT NULL UNIQUE,
+  expires_at   TIMESTAMPTZ NOT NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id ON auth_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires_at ON auth_sessions(expires_at);
+
+CREATE TABLE IF NOT EXISTS admin_audit_logs (
+  id          BIGSERIAL PRIMARY KEY,
+  admin_email TEXT        NOT NULL,
+  action      TEXT        NOT NULL,
+  target_type TEXT        NULL,
+  target_id   TEXT        NULL,
+  details     JSONB       NOT NULL DEFAULT '{}'::jsonb,
+  ip_address  TEXT        NULL,
+  user_agent  TEXT        NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_admin_audit_logs_created_at ON admin_audit_logs(created_at DESC);
 
 -- 6. Backfill existing users as verified (they signed up before verification was added)
 --    IMPORTANT: Run this AFTER deploying the new server code, so existing users

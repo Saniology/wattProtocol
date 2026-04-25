@@ -456,18 +456,14 @@
         </div>
 
         <div style="margin-top:24px;padding-top:20px;border-top:1px solid var(--border);">
-          <span class="panel-label" style="margin-bottom:12px;">View a different account</span>
-          <div style="display:flex;border:1px solid var(--border);">
-            <input type="email" id="switchEmail" placeholder="your@email.com"
-              style="flex:1;background:var(--black);border:none;padding:11px 14px;color:var(--white);font-family:var(--font-mono);font-size:12px;outline:none;">
-            <button onclick="lookupByEmail('switch')" id="switchBtn"
-              style="background:var(--gray2);border:none;border-left:1px solid var(--border);color:var(--white);padding:11px 16px;font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;white-space:nowrap;transition:background 0.15s,color 0.15s;"
-              onmouseover="this.style.background='var(--yellow)';this.style.color='var(--black)'"
-              onmouseout="this.style.background='var(--gray2)';this.style.color='var(--white)'">
-              View →
-            </button>
-          </div>
-          <p id="switchNote" style="font-family:var(--font-mono);font-size:10px;letter-spacing:0.12em;text-transform:uppercase;color:var(--gray4);margin-top:10px;"></p>
+          <span class="panel-label" style="margin-bottom:12px;">Session</span>
+          <button onclick="logoutDashboard()" id="switchBtn"
+            style="background:var(--gray2);border:1px solid var(--border);color:var(--white);padding:11px 16px;font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;white-space:nowrap;transition:background 0.15s,color 0.15s;cursor:pointer;"
+            onmouseover="this.style.background='var(--yellow)';this.style.color='var(--black)'"
+            onmouseout="this.style.background='var(--gray2)';this.style.color='var(--white)'">
+            Sign Out
+          </button>
+          <p id="switchNote" style="font-family:var(--font-mono);font-size:10px;letter-spacing:0.12em;text-transform:uppercase;color:var(--gray4);margin-top:10px;">Use your email and password to open another dashboard.</p>
         </div>
       </div>
 
@@ -490,18 +486,24 @@
 
   </div><!-- /#dashboardMain -->
 
-  <!-- ── No ref code: instant email lookup ── -->
+  <!-- ── Sign in / reset ── -->
   <div id="dashboardResend">
     <div class="resend-tag">⚡ Dashboard Access</div>
     <h1 class="resend-title">VIEW YOUR<br><span style="color:var(--yellow)">DASHBOARD.</span></h1>
-    <p class="resend-body">Enter the email you signed up with. Your dashboard loads instantly.</p>
+    <p class="resend-body" id="authIntro">Sign in with the email and password you used when joining the waitlist.</p>
 
     <div class="resend-form">
-      <input type="email" id="resendEmail" placeholder="your@email.com"
-        onkeydown="if(event.key==='Enter') lookupByEmail('resend')">
-      <button id="resendBtn" onclick="lookupByEmail('resend')">View Dashboard →</button>
+      <input type="email" id="resendEmail" placeholder="your@email.com">
+      <input type="password" id="resendPassword" placeholder="your password">
+      <input type="text" id="forgotWebsite" autocomplete="off" tabindex="-1" aria-hidden="true" style="position:absolute;left:-9999px;opacity:0;pointer-events:none;">
+      <button id="resendBtn" onclick="loginDashboard()">Sign In →</button>
+    </div>
+    <div class="resend-form" id="resetForm" style="display:none;margin-top:12px;">
+      <input type="password" id="resetPassword" placeholder="new password (min 8 chars)">
+      <button id="resetBtn" onclick="resetPassword()">Reset Password →</button>
     </div>
     <p id="resendNote"></p>
+    <p class="resend-join" style="margin-top:14px;"><a href="#" onclick="forgotPassword(event)">Forgot your password?</a></p>
 
     <hr class="resend-divider">
     <p class="resend-join">Not on the waitlist yet? <a href="index.html#waitlist">Join now — it's free →</a></p>
@@ -512,7 +514,8 @@
 <!-- shared.js MUST be at end of body so footer inserts after all content -->
 <script src="shared.js"></script>
 <script>
-const API = window.location.port === '3000' ? '' : 'http://localhost:3000';
+const API = window.WATT_API_BASE || document.documentElement.dataset.apiBase || '';
+let resetToken = '';
 
 // ── Roadmap ───────────────────────────────────────────────────────────────
 const DEFAULT_ROADMAP = [
@@ -525,25 +528,36 @@ const DEFAULT_ROADMAP = [
   { title: 'Protocol Scale — 1M+ Active Meters Worldwide', desc: 'Series A ($5M–$20M). White-label licensing to national utilities.',                              timeline: 'Year 2–3',   status: 'upcoming' },
 ];
 
-function escHtmlDb(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-
 function renderDashboardRoadmap(stages) {
   const container = document.getElementById('roadmapRows');
   if (!container || !stages.length) return;
-  container.innerHTML = stages.map((s, i) => {
-    const numLabel  = s.status === 'done' ? '✓' : String(i + 1).padStart(2, '0');
-    const numClass  = s.status === 'done' ? 'done' : s.status === 'current' ? 'now' : '';
-    const timeColor = s.status === 'done' ? 'color:var(--green)' : s.status === 'current' ? 'color:var(--yellow)' : '';
-    return `
-      <div class="roadmap-row">
-        <div class="rm-num ${numClass}">${numLabel}</div>
-        <div class="rm-body">
-          <div class="rm-title">${escHtmlDb(s.title)}</div>
-          ${s.desc ? `<div class="rm-desc">${escHtmlDb(s.desc)}</div>` : ''}
-        </div>
-        <span class="rm-time" ${timeColor ? `style="${timeColor}"` : ''}>${escHtmlDb(s.timeline)}</span>
-      </div>`;
-  }).join('');
+  container.replaceChildren(...stages.map((s, i) => {
+    const row = document.createElement('div');
+    const num = document.createElement('div');
+    const body = document.createElement('div');
+    const title = document.createElement('div');
+    const time = document.createElement('span');
+
+    row.className = 'roadmap-row';
+    num.className = `rm-num ${s.status === 'done' ? 'done' : s.status === 'current' ? 'now' : ''}`.trim();
+    num.textContent = s.status === 'done' ? '✓' : String(i + 1).padStart(2, '0');
+    body.className = 'rm-body';
+    title.className = 'rm-title';
+    title.textContent = s.title || '';
+    time.className = 'rm-time';
+    time.textContent = s.timeline || '';
+    if (s.status === 'done') time.style.color = 'var(--green)';
+    if (s.status === 'current') time.style.color = 'var(--yellow)';
+    body.appendChild(title);
+    if (s.desc) {
+      const desc = document.createElement('div');
+      desc.className = 'rm-desc';
+      desc.textContent = s.desc;
+      body.appendChild(desc);
+    }
+    row.append(num, body, time);
+    return row;
+  }));
 }
 
 (async function loadRoadmap() {
@@ -620,23 +634,31 @@ function renderDashboard(data) {
     },
   ];
 
-  document.getElementById('perkList').innerHTML = perks.map(p => `
-    <li>
-      <span class="perk-icon">${p.active ? p.icon : '🔒'}</span>
-      <div>
-        <span class="perk-name" style="color:${p.active ? '#fff' : 'var(--gray4)'}">${p.name}</span>
-        ${p.desc}
-      </div>
-    </li>
-  `).join('');
+  const perkList = document.getElementById('perkList');
+  perkList.replaceChildren(...perks.map((p) => {
+    const li = document.createElement('li');
+    const icon = document.createElement('span');
+    const wrap = document.createElement('div');
+    const name = document.createElement('span');
+
+    icon.className = 'perk-icon';
+    icon.textContent = p.active ? p.icon : '🔒';
+    name.className = 'perk-name';
+    name.style.color = p.active ? '#fff' : 'var(--gray4)';
+    name.textContent = p.name;
+    wrap.appendChild(name);
+    wrap.appendChild(document.createTextNode(` ${p.desc}`));
+    li.append(icon, wrap);
+    return li;
+  }));
 
   document.getElementById('infoEmail').textContent    = data.email;
   document.getElementById('infoCode').textContent     = data.referralCode;
   document.getElementById('infoJoined').textContent   =
     joined.toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' });
-  document.getElementById('infoFounding').innerHTML   = data.foundingMember
-    ? `<span style="color:var(--yellow)">⚡ Yes — #${data.position}</span>`
-    : `<span style="color:var(--gray4)">No</span>`;
+  const foundingInfo = document.getElementById('infoFounding');
+  foundingInfo.textContent = data.foundingMember ? `⚡ Yes — #${data.position}` : 'No';
+  foundingInfo.style.color = data.foundingMember ? 'var(--yellow)' : 'var(--gray4)';
   document.getElementById('infoRefCount').textContent = data.referralsCount;
   document.getElementById('infoWatt').textContent     = data.wattEarned.toLocaleString() + ' $WATT';
 
@@ -670,58 +692,65 @@ function renderDashboard(data) {
   main.style.display    = 'block';
 
   // Update URL without reload so bookmark/share works
-  history.replaceState(null, '', `?ref=${data.referralCode}`);
+  history.replaceState(null, '', 'dashboard.html');
 }
 
-// ── On load: check for ?ref= param first, else show lookup form ───────────
+function showAuth(note = '') {
+  document.getElementById('dashboardMain').style.display = 'none';
+  document.getElementById('dashboardLoading').style.display = 'none';
+  document.getElementById('dashboardResend').style.display = 'block';
+  document.getElementById('resendNote').textContent = note;
+  document.getElementById('resendEmail').focus();
+}
+
+async function loadDashboard(ref = '') {
+  const res = await fetch(ref ? `${API}/api/me?ref=${encodeURIComponent(ref)}` : `${API}/api/me`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Could not load dashboard.');
+  renderDashboard(data);
+}
+
 (async function () {
   const params  = new URLSearchParams(window.location.search);
   const ref     = params.get('ref');
   const email   = params.get('email');
-  const loading = document.getElementById('dashboardLoading');
-  const resend  = document.getElementById('dashboardResend');
-
-  if (!ref) {
-    loading.style.display = 'none';
-    resend.style.display  = 'block';
-    // Auto-lookup if email param is present (e.g. redirected from duplicate signup)
-    if (email) {
-      document.getElementById('resendEmail').value = decodeURIComponent(email);
-      lookupByEmail('resend');
-    } else {
-      document.getElementById('resendEmail').focus();
-    }
+  resetToken = params.get('reset') || '';
+  if (email) document.getElementById('resendEmail').value = decodeURIComponent(email);
+  if (resetToken) {
+    document.getElementById('dashboardLoading').style.display = 'none';
+    document.getElementById('dashboardResend').style.display = 'block';
+    document.getElementById('authIntro').textContent = 'Choose a new password to finish resetting your account.';
+    document.getElementById('resetForm').style.display = 'flex';
+    document.getElementById('resendPassword').style.display = 'none';
+    document.getElementById('resendBtn').style.display = 'none';
+    document.getElementById('resetPassword').focus();
     return;
   }
 
   try {
-    const res  = await fetch(`${API}/api/me?ref=${encodeURIComponent(ref)}`);
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error);
-    renderDashboard(data);
+    await loadDashboard(ref || '');
   } catch (err) {
-    loading.style.display = 'none';
-    resend.style.display  = 'block';
-    if (err.message) {
-      document.getElementById('resendNote').textContent = err.message;
-      document.getElementById('resendNote').style.color = '#ff4444';
-    }
-    document.getElementById('resendEmail').focus();
+    showAuth(err.message || '');
   }
 })();
 
-// ── Instant email lookup — no email sent, shows dashboard immediately ──────
-async function lookupByEmail(source) {
-  const isResend = source === 'resend';
-  const emailEl  = document.getElementById(isResend ? 'resendEmail' : 'switchEmail');
-  const btnEl    = document.getElementById(isResend ? 'resendBtn'   : 'switchBtn');
-  const noteEl   = document.getElementById(isResend ? 'resendNote'  : 'switchNote');
-  const email    = emailEl.value.trim();
+async function loginDashboard() {
+  const emailEl = document.getElementById('resendEmail');
+  const passwordEl = document.getElementById('resendPassword');
+  const btnEl = document.getElementById('resendBtn');
+  const noteEl = document.getElementById('resendNote');
+  const email = emailEl.value.trim();
+  const password = passwordEl.value;
 
   noteEl.style.color = '';
   noteEl.textContent = '';
 
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+  if (!email || !password) {
+    noteEl.textContent = 'Enter your email and password.';
+    noteEl.style.color = '#ff4444';
+    return;
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     noteEl.textContent = 'Please enter a valid email address.';
     noteEl.style.color = '#ff4444';
     return;
@@ -732,10 +761,10 @@ async function lookupByEmail(source) {
   btnEl.disabled    = true;
 
   try {
-    const res  = await fetch(`${API}/api/lookup`, {
+    const res  = await fetch(`${API}/api/auth/login`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ email }),
+      body:    JSON.stringify({ email, password }),
     });
     const data = await res.json();
 
@@ -747,21 +776,10 @@ async function lookupByEmail(source) {
       return;
     }
 
-    // Admin redirect — store key + email and go to admin panel
-    if (data.isAdmin) {
-      sessionStorage.setItem('adminKey',   data.adminKey);
-      sessionStorage.setItem('adminEmail', email);
-      window.location.href = 'admin.html';
-      return;
-    }
-
-    renderDashboard(data);
-    // Re-enable button and clear input after successful switch
+    await loadDashboard();
     btnEl.textContent  = orig;
     btnEl.disabled     = false;
-    emailEl.value      = '';
     noteEl.textContent = '';
-
   } catch {
     noteEl.textContent = 'Could not connect. Is the server running?';
     noteEl.style.color = '#ff4444';
@@ -770,14 +788,64 @@ async function lookupByEmail(source) {
   }
 }
 
-function logoutDashboard() {
-  // Clear URL and return to the email lookup form
-  history.replaceState(null, '', 'dashboard.html');
-  document.getElementById('dashboardMain').style.display   = 'none';
-  document.getElementById('dashboardLoading').style.display = 'none';
-  document.getElementById('dashboardResend').style.display  = 'block';
-  document.getElementById('resendEmail').value = '';
-  document.getElementById('resendEmail').focus();
+async function forgotPassword(event) {
+  if (event) event.preventDefault();
+  const email = document.getElementById('resendEmail').value.trim();
+  const noteEl = document.getElementById('resendNote');
+  if (!email) {
+    noteEl.textContent = 'Enter your email first and then request a reset link.';
+    noteEl.style.color = '#ff4444';
+    return;
+  }
+  try {
+    const res = await fetch(`${API}/api/auth/forgot-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, website: document.getElementById('forgotWebsite').value }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not send reset link.');
+    noteEl.textContent = 'If that account exists, a reset link is on the way.';
+    noteEl.style.color = 'var(--yellow)';
+  } catch (err) {
+    noteEl.textContent = err.message || 'Could not send reset link.';
+    noteEl.style.color = '#ff4444';
+  }
+}
+
+async function resetPassword() {
+  const password = document.getElementById('resetPassword').value;
+  const noteEl = document.getElementById('resendNote');
+  if (!password || password.length < 8) {
+    noteEl.textContent = 'Use at least 8 characters for your new password.';
+    noteEl.style.color = '#ff4444';
+    return;
+  }
+  try {
+    const res = await fetch(`${API}/api/auth/reset-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: resetToken, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Password reset failed.');
+    resetToken = '';
+    history.replaceState(null, '', 'dashboard.html');
+    await loadDashboard();
+  } catch (err) {
+    noteEl.textContent = err.message || 'Password reset failed.';
+    noteEl.style.color = '#ff4444';
+  }
+}
+
+async function logoutDashboard() {
+  await fetch(`${API}/api/auth/logout`, { method: 'POST' }).catch(() => {});
+  document.getElementById('resendPassword').style.display = '';
+  document.getElementById('resendBtn').style.display = '';
+  document.getElementById('resetForm').style.display = 'none';
+  document.getElementById('authIntro').textContent = 'Sign in with the email and password you used when joining the waitlist.';
+  document.getElementById('resendPassword').value = '';
+  showAuth('');
 }
 
 function copyLink() {

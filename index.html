@@ -734,6 +734,8 @@
 
   <form class="waitlist-form reveal" id="waitlistForm">
     <input type="email" id="waitlistEmail" placeholder="your@email.com" required>
+    <input type="password" id="waitlistPassword" placeholder="Choose a password" minlength="8" required>
+    <input type="text" id="waitlistWebsite" name="website" autocomplete="off" tabindex="-1" aria-hidden="true" style="position:absolute;left:-9999px;opacity:0;pointer-events:none;">
     <button type="submit" id="waitlistBtn">Join Now</button>
   </form>
   <!-- Referral code row -->
@@ -756,7 +758,7 @@
 <script src="shared.js"></script>
 <script>
   // ── Live founding slots counter ────────────────────────────────────────
-  const _apiBase = window.location.port === '3000' ? '' : 'http://localhost:3000';
+  const _apiBase = window.WATT_API_BASE || document.documentElement.dataset.apiBase || '';
   (async function loadSlots() {
     try {
       const r = await fetch(`${_apiBase}/api/stats`);
@@ -856,6 +858,8 @@
   (function () {
     const form    = document.getElementById('waitlistForm');
     const input   = document.getElementById('waitlistEmail');
+    const passwordInput = document.getElementById('waitlistPassword');
+    const honeypot = document.getElementById('waitlistWebsite');
     const btn     = document.getElementById('waitlistBtn');
     const note    = document.getElementById('waitlistNote');
     const success = document.getElementById('waitlistSuccess');
@@ -863,7 +867,13 @@
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       const email = input.value.trim();
-      if (!email) return;
+      const password = passwordInput.value;
+      if (!email || !password) return;
+      if (password.length < 8) {
+        note.textContent = 'Use at least 8 characters for your password.';
+        note.style.color = '#ff4444';
+        return;
+      }
 
       const referredBy = getRefCode();
       console.log('[WATT] Submitting signup — email:', email, '| referredBy:', referredBy || 'none');
@@ -871,14 +881,14 @@
       btn.textContent  = 'Joining...';
       btn.disabled     = true;
       input.disabled   = true;
+      passwordInput.disabled = true;
       note.style.color = '';
 
       try {
-        const apiUrl = window.location.port === '3000' ? '/api/waitlist' : 'http://localhost:3000/api/waitlist';
-        const res    = await fetch(apiUrl, {
+        const res    = await fetch(`${_apiBase}/api/waitlist`, {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ email, referredBy }),
+          body:    JSON.stringify({ email, password, referredBy, website: honeypot.value }),
         });
         const data = await res.json();
 
@@ -889,6 +899,7 @@
           btn.textContent = 'Join Now';
           btn.disabled    = false;
           input.disabled  = false;
+          passwordInput.disabled = false;
         } else if (res.ok && data.success) {
           // Legacy / already-verified path
           form.style.display    = 'none';
@@ -906,6 +917,7 @@
           btn.textContent = 'Join Now';
           btn.disabled    = false;
           input.disabled  = false;
+          passwordInput.disabled = false;
         } else {
           throw new Error(data.error || 'Something went wrong.');
         }
@@ -915,6 +927,7 @@
         btn.textContent  = 'Try Again';
         btn.disabled     = false;
         input.disabled   = false;
+        passwordInput.disabled = false;
       }
     });
 

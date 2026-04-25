@@ -8,6 +8,7 @@ import express from 'express';
 import rateLimit from 'express-rate-limit';
 import nodemailer from 'nodemailer';
 import { nanoid } from 'nanoid';
+import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -18,9 +19,29 @@ const geoip    = _require('geoip-lite');
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
+const testHooks = globalThis.__WATT_TEST_HOOKS__ || {};
+
+const SESSION_COOKIE_NAME = 'watt_session';
+const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7;
+const RESET_TTL_MS = 1000 * 60 * 30;
+const VERIFY_TTL_MS = 1000 * 60 * 60 * 24;
+const DEFAULT_DISPOSABLE_DOMAINS = new Set([
+  '10minutemail.com',
+  'dispostable.com',
+  'getnada.com',
+  'guerrillamail.com',
+  'maildrop.cc',
+  'mailinator.com',
+  'sharklasers.com',
+  'temp-mail.org',
+  'tempmail.com',
+  'throwawaymail.com',
+  'trashmail.com',
+  'yopmail.com',
+]);
 
 // ── Supabase (service role key — server-side only, never sent to browser) ──
-const supabase = createClient(
+const supabase = testHooks.supabase || createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_KEY
 );
@@ -41,28 +62,253 @@ async function getConfig() {
 
 function invalidateConfig() { _configCache = null; }
 
-// ── Admin auth middleware ──────────────────────────────────────────────────
+function parseCookies(req) {
+  const raw = req.headers.cookie || '';
+  return Object.fromEntries(
+    raw.split(';')
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .map((part) => {
+        const idx = part.indexOf('=');
+        if (idx === -1) return [part, ''];
+        return [part.slice(0, idx), decodeURIComponent(part.slice(idx + 1))];
+      })
+  );
+}
+
+function toBool(value) {
+  return value === true || value === 'true';
+}
+
+function normalizeEmail(email) {
+  return String(email || '').trim().toLowerCase();
+}
+
+function isValidEmail(email) {
+  if (!email || typeof email !== 'string') return false;
+  if (email.length > 254) return false;
+  if (!/^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+$/i.test(email)) return false;
+  const [local = '', domain = ''] = email.split('@');
+  if (!local || !domain || local.length > 64) return false;
+  if (local.startsWith('.') || local.endsWith('.') || local.includes('..')) return false;
+  if (domain.includes('..')) return false;
+  return domain.split('.').every((label) => label.length > 0 && !label.startsWith('-') && !label.endsWith('-'));
+}
+
+function getDisposableDomains() {
+  const extra = String(process.env.DISPOSABLE_EMAIL_DOMAINS || '')
+    .split(',')
+    .map((d) => d.trim().toLowerCase())
+    .filter(Boolean);
+  return new Set([...DEFAULT_DISPOSABLE_DOMAINS, ...extra]);
+}
+
+function isDisposableEmail(email) {
+  const domain = normalizeEmail(email).split('@')[1] || '';
+  if (!domain) return false;
+  for (const blocked of getDisposableDomains()) {
+    if (domain === blocked || domain.endsWith(`.${blocked}`)) return true;
+  }
+  return false;
+}
+
+function hasHoneypot(req) {
+  return Boolean(String(req.body?.website || '').trim());
+}
+
+function hashSecret(value) {
+  return crypto.scryptSync(String(value), process.env.AUTH_SALT || 'watt-protocol-auth', 64).toString('hex');
+}
+
+function constantTimeEqual(a, b) {
+  const left = Buffer.from(String(a || ''));
+  const right = Buffer.from(String(b || ''));
+  if (left.length !== right.length) return false;
+  return crypto.timingSafeEqual(left, right);
+}
+
+function verifySecret(plain, expectedHash) {
+  if (!plain || !expectedHash) return false;
+  return constantTimeEqual(hashSecret(plain), expectedHash);
+}
+
+function createSignedToken(size = 32) {
+  return crypto.randomBytes(size).toString('hex');
+}
+
+function signValue(value) {
+  const secret = process.env.SESSION_SECRET || process.env.ADMIN_KEY || 'watt-dev-secret';
+  return crypto.createHmac('sha256', secret).update(String(value)).digest('hex');
+}
+
+function buildSignedUnsubscribeUrl(email, siteUrl) {
+  const normalizedEmail = normalizeEmail(email);
+  const sig = signValue(`unsubscribe:${normalizedEmail}`);
+  return `${siteUrl}/unsubscribe?email=${encodeURIComponent(normalizedEmail)}&sig=${sig}`;
+}
+
+function renderSimplePage({ title, heading, body, siteUrl, tone = 'yellow' }) {
+  const accent = tone === 'red' ? '#ef4444' : '#f5e642';
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><style>body{margin:0;background:#080808;color:#fff;font-family:'Inter',system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px}.box{max-width:420px;text-align:center}.icon{font-size:48px;margin-bottom:16px}h2{color:${accent};font-family:'Courier New',monospace;letter-spacing:.05em;margin-bottom:12px}p{color:#888;font-size:14px;line-height:1.7}a{color:#f5e642;text-decoration:none}a:hover{text-decoration:underline}</style></head><body><div class="box"><div class="icon">✓</div><h2>${heading}</h2><p>${body}</p><p style="margin-top:24px"><a href="${siteUrl}">← Back to $WATT Protocol</a></p></div></body></html>`;
+}
+
+function getSessionCookieOptions() {
+  return [
+    `${SESSION_COOKIE_NAME}=`,
+    'Path=/',
+    `Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`,
+    'HttpOnly',
+    'SameSite=Lax',
+    process.env.NODE_ENV === 'production' ? 'Secure' : '',
+  ].filter(Boolean);
+}
+
+function setSessionCookie(res, token) {
+  const parts = getSessionCookieOptions();
+  parts[0] = `${SESSION_COOKIE_NAME}=${encodeURIComponent(token)}`;
+  res.setHeader('Set-Cookie', parts.join('; '));
+}
+
+function clearSessionCookie(res) {
+  const parts = getSessionCookieOptions();
+  parts[0] = `${SESSION_COOKIE_NAME}=`;
+  parts[2] = 'Max-Age=0';
+  res.setHeader('Set-Cookie', parts.join('; '));
+}
+
+async function createSession({ role, userId = null, adminEmail = null }) {
+  const token = createSignedToken(32);
+  const tokenHash = hashSecret(token);
+  const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
+  const payload = {
+    role,
+    user_id: userId,
+    admin_email: adminEmail,
+    token_hash: tokenHash,
+    expires_at: expiresAt,
+  };
+  const { error } = await supabase.from('auth_sessions').insert([payload]);
+  if (error) throw error;
+  return token;
+}
+
+async function deleteSessionByToken(token) {
+  if (!token) return;
+  const tokenHash = hashSecret(token);
+  await supabase.from('auth_sessions').delete().eq('token_hash', tokenHash);
+}
+
+async function getSessionFromRequest(req) {
+  const cookies = parseCookies(req);
+  const token = cookies[SESSION_COOKIE_NAME];
+  if (!token) return null;
+  const tokenHash = hashSecret(token);
+  const { data: session } = await supabase
+    .from('auth_sessions')
+    .select('id, role, user_id, admin_email, expires_at')
+    .eq('token_hash', tokenHash)
+    .maybeSingle();
+  if (!session) return null;
+  if (session.expires_at && new Date(session.expires_at).getTime() <= Date.now()) {
+    await supabase.from('auth_sessions').delete().eq('id', session.id);
+    return null;
+  }
+  return session;
+}
+
+async function attachSession(req, _res, next) {
+  try {
+    req.session = await getSessionFromRequest(req);
+  } catch (error) {
+    console.error('[WATT] Session attach error:', error.message);
+    req.session = null;
+  }
+  next();
+}
+
 function requireAdmin(req, res, next) {
-  const key = (req.headers.authorization || '').replace('Bearer ', '').trim();
-  if (!process.env.ADMIN_KEY || key !== process.env.ADMIN_KEY) {
+  if (!req.session || req.session.role !== 'admin') {
     return res.status(401).json({ error: 'Unauthorized.' });
   }
   next();
 }
 
-// ── CORS: allow Live Server (5500) and any localhost origin ────────────────
+function requireUser(req, res, next) {
+  if (!req.session || req.session.role !== 'user' || !req.session.user_id) {
+    return res.status(401).json({ error: 'Please sign in first.' });
+  }
+  next();
+}
+
+async function logAdminAction(req, action, targetType, targetId = null, details = {}) {
+  if (!req.session?.admin_email) return;
+  try {
+    await supabase.from('admin_audit_logs').insert([{
+      admin_email: req.session.admin_email,
+      action,
+      target_type: targetType,
+      target_id: targetId,
+      details,
+      ip_address: getClientIp(req),
+      user_agent: String(req.headers['user-agent'] || '').slice(0, 500),
+    }]);
+  } catch (error) {
+    console.warn('[WATT] Admin audit log failed:', error.message);
+  }
+}
+
+async function isUnsubscribed(email) {
+  const { data } = await supabase
+    .from('waitlist_users')
+    .select('unsubscribed')
+    .eq('email', normalizeEmail(email))
+    .maybeSingle();
+  return Boolean(data?.unsubscribed);
+}
+
+async function sendManagedMail({ to, subject, html, text, transactional = false, siteUrl, ...rest }) {
+  const normalizedEmail = normalizeEmail(to);
+  if (!normalizedEmail) throw new Error('Recipient email required.');
+  if (!transactional && await isUnsubscribed(normalizedEmail)) {
+    console.log(`[WATT] Skipping non-transactional email to unsubscribed recipient: ${normalizedEmail}`);
+    return { skipped: true };
+  }
+  const finalHtml = !transactional && siteUrl && html
+    ? html.replaceAll('{{UNSUBSCRIBE_URL}}', buildSignedUnsubscribeUrl(normalizedEmail, siteUrl))
+    : html;
+  const finalText = !transactional && siteUrl && text
+    ? `${text}\n\nUnsubscribe: ${buildSignedUnsubscribeUrl(normalizedEmail, siteUrl)}`
+    : text;
+  await transporter.sendMail({
+    from: `"${process.env.FROM_NAME || '$WATT Protocol'}" <${process.env.FROM_EMAIL || process.env.SMTP_USER}>`,
+    to: normalizedEmail,
+    subject,
+    html: finalHtml,
+    text: finalText,
+    ...rest,
+  });
+  return { skipped: false };
+}
+
+// ── CORS: same-origin by default, optional env overrides ───────────────────
 app.use((req, res, next) => {
   const origin = req.headers.origin || '';
-  if (!origin || origin.startsWith('http://localhost') || origin.startsWith('http://127.0.0.1')) {
-    res.setHeader('Access-Control-Allow-Origin', origin || '*');
+  const allowedOrigins = String(process.env.CORS_ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  if (origin && allowedOrigins.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
   }
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
 
 app.use(express.json());
+app.use(attachSession);
 
 // ── Rate limiting ──────────────────────────────────────────────────────────
 const isDev = process.env.NODE_ENV !== 'production';
@@ -94,6 +340,30 @@ const adminLimiter = rateLimit({
   message: { error: 'Too many admin attempts. Try again in an hour.' },
 });
 
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: isDev ? 100 : 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many sign-in attempts. Please try again shortly.' },
+});
+
+const forgotPasswordLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: isDev ? 100 : 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many password reset attempts. Please try again later.' },
+});
+
+const emailActionLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: isDev ? 100 : 8,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many email requests. Please wait a bit and try again.' },
+});
+
 // Service worker must never be cached by the browser (so updates are detected immediately)
 app.get('/sw.js', (_req, res) => {
   res.sendFile(path.join(__dirname, 'sw.js'), {
@@ -104,7 +374,7 @@ app.get('/sw.js', (_req, res) => {
 app.use(express.static(__dirname));
 
 // ── SMTP transporter ───────────────────────────────────────────────────────
-const transporter = nodemailer.createTransport({
+const transporter = testHooks.transporter || nodemailer.createTransport({
   host:   process.env.SMTP_HOST,
   port:   Number(process.env.SMTP_PORT) || 587,
   secure: Number(process.env.SMTP_PORT) === 465,
@@ -200,7 +470,7 @@ function buildHtmlEmail(referralCode, referralLink, dashboardUrl, siteUrl, roadm
     .replaceAll('{{DASHBOARD_URL}}',        dashboardUrl)
     .replaceAll('{{SITE_URL}}',             siteUrl)
     .replaceAll('{{SITE_URL_DISPLAY}}',     siteDisplay)
-    .replaceAll('{{UNSUBSCRIBE_URL}}',      `${siteUrl}/unsubscribe`)
+    .replaceAll('{{UNSUBSCRIBE_URL}}',      '{{UNSUBSCRIBE_URL}}')
     .replaceAll('{{ROADMAP_ITEMS}}',        buildRoadmapHtml(roadmapStages));
 }
 
@@ -244,7 +514,6 @@ Website:  ${siteUrl}
 
 ────────────────────────────────
 $WATT is a utility token. This is not financial advice.
-Unsubscribe: ${siteUrl}/unsubscribe
 `.trim();
 }
 
@@ -352,6 +621,37 @@ function buildVerificationEmail(verifyUrl, siteUrl) {
 </body></html>`;
 }
 
+function buildResetPasswordEmail(resetUrl, siteUrl) {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Reset your $WATT password</title></head>
+<body style="margin:0;padding:0;background:#080808;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;color:#fff;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#080808;padding:40px 16px;">
+<tr><td align="center">
+<table role="presentation" width="520" cellpadding="0" cellspacing="0" style="max-width:520px;width:100%;">
+  <tr><td style="background:#0f0f0f;padding:18px 24px;border-left:4px solid #f5e642;">
+    <span style="font-family:'Courier New',monospace;font-size:11px;font-weight:700;color:#f5e642;letter-spacing:0.18em;">$WATT PROTOCOL</span>
+  </td></tr>
+  <tr><td style="background:#0e0e00;padding:48px 40px 40px;border-left:4px solid #f5e642;">
+    <p style="font-family:'Courier New',monospace;font-size:10px;letter-spacing:0.35em;color:#f5e642;text-transform:uppercase;margin:0 0 14px;">PASSWORD RESET</p>
+    <h1 style="font-size:30px;font-weight:700;line-height:1.15;margin:0 0 20px;color:#fff;">Reset your<br><span style="color:#f5e642;">$WATT password.</span></h1>
+    <p style="font-size:15px;color:#888;line-height:1.8;margin:0 0 32px;">Use the secure link below to choose a new password. This link expires in 30 minutes.</p>
+    <a href="${resetUrl}" style="display:inline-block;background:#f5e642;color:#080808;font-family:'Courier New',monospace;font-size:12px;font-weight:700;letter-spacing:0.15em;text-transform:uppercase;padding:16px 36px;text-decoration:none;">RESET PASSWORD →</a>
+    <p style="font-size:12px;color:#444;line-height:1.7;margin:32px 0 0;">Or copy this URL into your browser:<br><span style="color:#f5e642;word-break:break-all;">${resetUrl}</span></p>
+  </td></tr>
+  <tr><td style="background:#080808;padding:20px 40px;border-left:4px solid #f5e642;">
+    <p style="font-size:10px;color:#2a2a2a;line-height:1.75;margin:0;">
+      If you didn't request this, you can ignore this email.<br>
+      <a href="${siteUrl}" style="color:#3a3a3a;">${siteUrl.replace(/^https?:\/\//, '')}</a>
+    </p>
+  </td></tr>
+</table>
+</td></tr>
+</table>
+</body></html>`;
+}
+
 // ── GET /ref/:code — referral link redirect ────────────────────────────────
 app.get('/ref/:code', (req, res) => {
   const code = (req.params.code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -363,15 +663,23 @@ app.get('/ref/:code', (req, res) => {
 
 // ── POST /api/waitlist ─────────────────────────────────────────────────────
 app.post('/api/waitlist', waitlistLimiter, async (req, res) => {
-  const { email, referredBy } = req.body || {};
+  const { email, password, referredBy } = req.body || {};
 
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+  if (hasHoneypot(req)) {
+    return res.status(200).json({ success: true, requiresVerification: true });
+  }
+  if (!isValidEmail(email)) {
     return res.status(400).json({ error: 'A valid email address is required.' });
   }
+  if (isDisposableEmail(email)) {
+    return res.status(400).json({ error: 'Temporary email addresses are not allowed.' });
+  }
+  if (!password || String(password).length < 8) {
+    return res.status(400).json({ error: 'Please choose a password with at least 8 characters.' });
+  }
 
-  const normalizedEmail = email.toLowerCase().trim();
+  const normalizedEmail = normalizeEmail(email);
 
-  // Check duplicate — treat lookup errors as blocked (fail safe)
   const { data: existing, error: lookupError } = await supabase
     .from('waitlist_users')
     .select('referral_code')
@@ -382,86 +690,64 @@ app.post('/api/waitlist', waitlistLimiter, async (req, res) => {
     console.error('[WATT] Duplicate check failed:', lookupError.message);
     return res.status(500).json({ error: 'Could not verify your email. Please try again.' });
   }
-
   if (existing) {
     return res.json({ success: false, alreadyExists: true, referralCode: existing.referral_code });
   }
 
-  // Load dynamic config
   const cfg = await getConfig();
   const foundingThreshold = parseInt(cfg.founding_member_threshold) || 1000;
+  const { count } = await supabase.from('waitlist_users').select('*', { count: 'exact', head: true });
 
-  // Count existing users to assign founding member status
-  const { count } = await supabase
-    .from('waitlist_users')
-    .select('*', { count: 'exact', head: true });
-
-  const siteUrl        = getSiteUrl(req);
-  const referralCode   = nanoid(8).toUpperCase();
-  const referralLink   = `${siteUrl}/ref/${referralCode}`;
-  const dashboardUrl   = `${siteUrl}/dashboard.html?ref=${referralCode}`;
+  const siteUrl = getSiteUrl(req);
+  const referralCode = nanoid(8).toUpperCase();
+  const referralLink = `${siteUrl}/ref/${referralCode}`;
   const foundingMember = (count || 0) < foundingThreshold;
-
-  // Sanitize referral code BEFORE insert so referred_by is stored consistently uppercase
   const cleanRef = (referredBy || '').toUpperCase().trim().replace(/[^A-Z0-9]/g, '');
-  console.log(`[WATT] referredBy received: "${cleanRef || 'none'}"`);
 
-  // Generate email verification token
-  const verificationToken = nanoid(32);
+  const verificationToken = createSignedToken(32);
+  const verificationTokenHash = hashSecret(verificationToken);
+  const verificationExpiresAt = new Date(Date.now() + VERIFY_TTL_MS).toISOString();
   const verifyUrl = `${siteUrl}/verify-email?token=${verificationToken}`;
 
-  // Geo-locate from IP (best-effort — never blocks signup)
-  const clientIp  = getClientIp(req);
-  const geoData   = geoFromIp(clientIp);
+  const clientIp = getClientIp(req);
+  const geoData = geoFromIp(clientIp);
   const countryCode = geoData?.country || null;
   const countryName = countryCode ? (COUNTRY_NAMES[countryCode] || countryCode) : null;
-  const signupLat   = geoData?.ll?.[0] ?? null;
-  const signupLng   = geoData?.ll?.[1] ?? null;
-  console.log(`[WATT] Geo: ip=${clientIp} → ${countryName || 'unknown'}`);
+  const signupLat = geoData?.ll?.[0] ?? null;
+  const signupLng = geoData?.ll?.[1] ?? null;
 
-  // Insert user — try with all new columns first, fall back to base columns if migration not run yet
   let { error: insertError } = await supabase
     .from('waitlist_users')
     .insert([{
-      email:              normalizedEmail,
-      referral_code:      referralCode,
-      referral_link:      referralLink,
-      referred_by:        cleanRef || null,
-      founding_member:    foundingMember,
-      email_verified:     false,
-      verification_token: verificationToken,
-      country_code:       countryCode,
-      country_name:       countryName,
-      signup_lat:         signupLat,
-      signup_lng:         signupLng,
+      email: normalizedEmail,
+      password_hash: hashSecret(password),
+      referral_code: referralCode,
+      referral_link: referralLink,
+      referred_by: cleanRef || null,
+      founding_member: foundingMember,
+      email_verified: false,
+      verification_token: verificationTokenHash,
+      verification_expires_at: verificationExpiresAt,
+      country_code: countryCode,
+      country_name: countryName,
+      signup_lat: signupLat,
+      signup_lng: signupLng,
+      unsubscribed: false,
     }]);
 
-  // If new columns don't exist yet (migrations not run), fall back to base fields
   if (insertError) {
-    const isColumnError = insertError.message?.toLowerCase().includes('column')
-                       || insertError.code === '42703'; // PostgreSQL: undefined_column
+    const isColumnError = insertError.message?.toLowerCase().includes('column') || insertError.code === '42703';
     if (isColumnError) {
-      console.warn('[WATT] New columns missing — falling back to base insert. Run migrations.sql!');
-      const { error: fallbackError } = await supabase
-        .from('waitlist_users')
-        .insert([{
-          email:           normalizedEmail,
-          referral_code:   referralCode,
-          referral_link:   referralLink,
-          referred_by:     cleanRef || null,
-          founding_member: foundingMember,
-        }]);
-      insertError = fallbackError;
+      console.warn('[WATT] Missing new auth columns. Run migrations.sql before using password auth.');
+      return res.status(500).json({ error: 'Server migrations are incomplete. Please contact support.' });
     }
   }
 
   if (insertError) {
-    // 23505 = unique_violation — email already exists (race condition or missing pre-check)
     const isDuplicate = insertError.code === '23505'
-                     || insertError.message?.toLowerCase().includes('duplicate')
-                     || insertError.message?.toLowerCase().includes('unique');
+      || insertError.message?.toLowerCase().includes('duplicate')
+      || insertError.message?.toLowerCase().includes('unique');
     if (isDuplicate) {
-      console.warn(`[WATT] Duplicate blocked at insert level for: ${normalizedEmail}`);
       const { data: existingUser } = await supabase
         .from('waitlist_users')
         .select('referral_code')
@@ -473,40 +759,14 @@ app.post('/api/waitlist', waitlistLimiter, async (req, res) => {
     return res.status(500).json({ error: 'Could not save your signup. Please try again.' });
   }
 
-  // Increment referrer count (cache field — live count is used for display)
-  if (cleanRef) {
-    const { data: referrer, error: refErr } = await supabase
-      .from('waitlist_users')
-      .select('id, email, referrals_count')
-      .eq('referral_code', cleanRef)
-      .maybeSingle();
-
-    if (refErr) {
-      console.error('[WATT] Referrer lookup error:', refErr.message);
-    } else if (!referrer) {
-      console.warn(`[WATT] Referral code "${cleanRef}" not found in DB — no credit given`);
-    } else {
-      const newCount = (referrer.referrals_count || 0) + 1;
-      const { error: updateErr } = await supabase
-        .from('waitlist_users')
-        .update({ referrals_count: newCount })
-        .eq('id', referrer.id);
-      if (updateErr) {
-        console.error('[WATT] Referral count update error:', updateErr.message);
-      } else {
-        console.log(`[WATT] ✓ Referral credited: ${referrer.email} now has ${newCount} referral(s)`);
-      }
-    }
-  }
-
-  // Send verification email (welcome email is sent after they click the link)
   try {
-    await transporter.sendMail({
-      from:    `"${process.env.FROM_NAME || '$WATT Protocol'}" <${process.env.FROM_EMAIL || process.env.SMTP_USER}>`,
-      to:      normalizedEmail,
+    await sendManagedMail({
+      to: normalizedEmail,
       subject: '⚡ Confirm your $WATT spot — one click to go',
-      html:    buildVerificationEmail(verifyUrl, siteUrl),
-      text:    `Confirm your $WATT Protocol waitlist spot:\n\n${verifyUrl}\n\nThis link expires in 24 hours.`,
+      html: buildVerificationEmail(verifyUrl, siteUrl),
+      text: `Confirm your $WATT Protocol waitlist spot:\n\n${verifyUrl}\n\nThis link expires in 24 hours.`,
+      transactional: true,
+      siteUrl,
     });
     console.log(`[WATT] ✓ Verification email sent: ${normalizedEmail}`);
   } catch (err) {
@@ -518,41 +778,78 @@ app.post('/api/waitlist', waitlistLimiter, async (req, res) => {
 
 // ── GET /verify-email?token=xxx ────────────────────────────────────────────
 app.get('/verify-email', async (req, res) => {
-  const token   = (req.query.token || '').trim();
+  const token   = String(req.query.token || '').trim();
   const siteUrl = getSiteUrl(req);
 
   if (!token) return res.redirect('/?error=invalid-token');
+  const tokenHash = hashSecret(token);
 
   const { data: user, error } = await supabase
     .from('waitlist_users')
-    .select('id, email, referral_code, referral_link, founding_member, email_verified')
-    .eq('verification_token', token)
+    .select('id, email, referral_code, referral_link, founding_member, email_verified, verification_expires_at, referred_by')
+    .eq('verification_token', tokenHash)
     .maybeSingle();
 
   if (error || !user) {
-    return res.send(`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Invalid Link — $WATT</title><style>body{margin:0;background:#080808;color:#fff;font-family:'Inter',system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px}.box{max-width:420px;text-align:center}h2{color:#ef4444;margin-bottom:12px}p{color:#888;font-size:14px;line-height:1.7}a{color:#f5e642}</style></head><body><div class="box"><h2>Invalid or Expired Link</h2><p>This verification link has already been used or has expired.<br><a href="${siteUrl}">← Back to $WATT Protocol</a></p></div></body></html>`);
+    return res.send(renderSimplePage({
+      title: 'Invalid Link — $WATT',
+      heading: 'Invalid or Expired Link',
+      body: `This verification link has already been used or has expired.`,
+      siteUrl,
+      tone: 'red',
+    }));
   }
 
-  // Already verified — just redirect to dashboard
+  if (user.verification_expires_at && new Date(user.verification_expires_at).getTime() <= Date.now()) {
+    return res.send(renderSimplePage({
+      title: 'Expired Link — $WATT',
+      heading: 'Verification Link Expired',
+      body: 'Your verification link expired. Please request a new one from the sign-in screen.',
+      siteUrl,
+      tone: 'red',
+    }));
+  }
+
   if (user.email_verified) {
-    return res.redirect(`${siteUrl}/dashboard.html?ref=${user.referral_code}`);
+    const sessionToken = await createSession({ role: 'user', userId: user.id });
+    setSessionCookie(res, sessionToken);
+    return res.redirect(`${siteUrl}/dashboard.html`);
   }
 
-  // Mark verified and clear token
   await supabase
     .from('waitlist_users')
-    .update({ email_verified: true, verification_token: null })
+    .update({
+      email_verified: true,
+      verification_token: null,
+      verification_expires_at: null,
+    })
     .eq('id', user.id);
 
-  const dashboardUrl = `${siteUrl}/dashboard.html?ref=${user.referral_code}`;
-  const referralLink = user.referral_link;
+  if (user.referred_by) {
+    const { data: referrer, error: refErr } = await supabase
+      .from('waitlist_users')
+      .select('id, email, referrals_count')
+      .eq('referral_code', user.referred_by)
+      .maybeSingle();
+    if (refErr) {
+      console.error('[WATT] Referrer lookup error after verify:', refErr.message);
+    } else if (referrer) {
+      const { error: updateErr } = await supabase
+        .from('waitlist_users')
+        .update({ referrals_count: (referrer.referrals_count || 0) + 1 })
+        .eq('id', referrer.id);
+      if (updateErr) {
+        console.error('[WATT] Referral count update error after verify:', updateErr.message);
+      }
+    }
+  }
 
-  // Fetch admin config for dynamic roadmap
+  const dashboardUrl = `${siteUrl}/dashboard.html`;
+  const referralLink = user.referral_link;
   const cfg = await getConfig();
   let roadmapStages = [];
   try { roadmapStages = JSON.parse(cfg.roadmap || '[]'); } catch {}
 
-  // Now send the full welcome email
   const pdfPath = path.join(__dirname, 'watt-protocol-whitepaper.pdf');
   let pdfContent;
   try { pdfContent = fs.readFileSync(pdfPath).toString('base64'); }
@@ -575,26 +872,198 @@ app.get('/verify-email', async (req, res) => {
   }
 
   try {
-    await transporter.sendMail(mailOptions);
+    await sendManagedMail({
+      ...mailOptions,
+      subject: mailOptions.subject,
+      html: mailOptions.html,
+      text: mailOptions.text,
+      attachments: mailOptions.attachments,
+      transactional: false,
+      siteUrl,
+      to: user.email,
+    });
     console.log(`[WATT] ✓ Verified + welcome email sent: ${user.email} | ref:${user.referral_code}`);
   } catch (err) {
     console.error('[WATT] Welcome email error after verify:', err.message);
   }
 
-  // Redirect to dashboard
+  const sessionToken = await createSession({ role: 'user', userId: user.id });
+  setSessionCookie(res, sessionToken);
   return res.redirect(dashboardUrl);
+});
+
+// ── POST /api/auth/login ───────────────────────────────────────────────────
+app.post('/api/auth/login', authLimiter, async (req, res) => {
+  const email = normalizeEmail(req.body?.email);
+  const password = String(req.body?.password || '');
+
+  if (!isValidEmail(email)) {
+    return res.status(400).json({ error: 'Please enter a valid email address.' });
+  }
+  if (!password) {
+    return res.status(400).json({ error: 'Password is required.' });
+  }
+
+  const { data: user, error } = await supabase
+    .from('waitlist_users')
+    .select('id, password_hash, email_verified')
+    .eq('email', email)
+    .maybeSingle();
+
+  if (error || !user || !user.password_hash || !verifySecret(password, user.password_hash)) {
+    return res.status(401).json({ error: 'Invalid email or password.' });
+  }
+  if (!toBool(user.email_verified)) {
+    return res.status(403).json({ error: 'Please verify your email before signing in.' });
+  }
+
+  const sessionToken = await createSession({ role: 'user', userId: user.id });
+  setSessionCookie(res, sessionToken);
+  return res.json({ success: true });
+});
+
+// ── POST /api/auth/forgot-password ────────────────────────────────────────
+app.post('/api/auth/forgot-password', forgotPasswordLimiter, async (req, res) => {
+  const email = normalizeEmail(req.body?.email);
+  const siteUrl = getSiteUrl(req);
+
+  if (hasHoneypot(req)) {
+    return res.json({ success: true });
+  }
+  if (!isValidEmail(email)) {
+    return res.status(400).json({ error: 'Please enter a valid email address.' });
+  }
+
+  const { data: user } = await supabase
+    .from('waitlist_users')
+    .select('id, email')
+    .eq('email', email)
+    .maybeSingle();
+
+  if (user) {
+    const resetToken = createSignedToken(32);
+    const resetTokenHash = hashSecret(resetToken);
+    const resetExpiresAt = new Date(Date.now() + RESET_TTL_MS).toISOString();
+    await supabase
+      .from('waitlist_users')
+      .update({
+        reset_token: resetTokenHash,
+        reset_token_expires_at: resetExpiresAt,
+      })
+      .eq('id', user.id);
+
+    const resetUrl = `${siteUrl}/dashboard.html?reset=${encodeURIComponent(resetToken)}`;
+    try {
+      await sendManagedMail({
+        to: user.email,
+        subject: '⚡ Reset your $WATT password',
+        html: buildResetPasswordEmail(resetUrl, siteUrl),
+        text: `Reset your $WATT password:\n\n${resetUrl}\n\nThis link expires in 30 minutes.`,
+        transactional: true,
+        siteUrl,
+      });
+    } catch (err) {
+      console.error('[WATT] Password reset email error:', err.message);
+    }
+  }
+
+  return res.json({ success: true });
+});
+
+// ── POST /api/auth/reset-password ─────────────────────────────────────────
+app.post('/api/auth/reset-password', forgotPasswordLimiter, async (req, res) => {
+  const token = String(req.body?.token || '').trim();
+  const password = String(req.body?.password || '');
+
+  if (!token) return res.status(400).json({ error: 'Reset token required.' });
+  if (!password || password.length < 8) {
+    return res.status(400).json({ error: 'Please choose a password with at least 8 characters.' });
+  }
+
+  const tokenHash = hashSecret(token);
+  const { data: user } = await supabase
+    .from('waitlist_users')
+    .select('id, reset_token_expires_at')
+    .eq('reset_token', tokenHash)
+    .maybeSingle();
+
+  if (!user || !user.reset_token_expires_at || new Date(user.reset_token_expires_at).getTime() <= Date.now()) {
+    return res.status(400).json({ error: 'This reset link is invalid or expired.' });
+  }
+
+  await supabase
+    .from('waitlist_users')
+    .update({
+      password_hash: hashSecret(password),
+      reset_token: null,
+      reset_token_expires_at: null,
+    })
+    .eq('id', user.id);
+
+  const sessionToken = await createSession({ role: 'user', userId: user.id });
+  setSessionCookie(res, sessionToken);
+  return res.json({ success: true });
+});
+
+// ── POST /api/auth/logout ─────────────────────────────────────────────────
+app.post('/api/auth/logout', async (req, res) => {
+  const token = parseCookies(req)[SESSION_COOKIE_NAME];
+  await deleteSessionByToken(token);
+  clearSessionCookie(res);
+  return res.json({ success: true });
+});
+
+// ── GET /api/auth/session ─────────────────────────────────────────────────
+app.get('/api/auth/session', async (req, res) => {
+  if (!req.session) return res.status(401).json({ authenticated: false });
+  return res.json({
+    authenticated: true,
+    role: req.session.role,
+    adminEmail: req.session.admin_email || null,
+  });
+});
+
+// ── POST /api/admin/login ─────────────────────────────────────────────────
+app.post('/api/admin/login', adminLimiter, authLimiter, async (req, res) => {
+  const email = normalizeEmail(req.body?.email);
+  const password = String(req.body?.password || '');
+  const adminEmail = normalizeEmail(process.env.ADMIN_EMAIL);
+  const adminPasswordHash = process.env.ADMIN_PASSWORD_HASH || (process.env.ADMIN_PASSWORD ? hashSecret(process.env.ADMIN_PASSWORD) : '');
+
+  if (!adminEmail || !adminPasswordHash) {
+    return res.status(500).json({ error: 'Admin credentials are not configured.' });
+  }
+  if (email !== adminEmail || !verifySecret(password, adminPasswordHash)) {
+    return res.status(401).json({ error: 'Invalid admin credentials.' });
+  }
+
+  const sessionToken = await createSession({ role: 'admin', adminEmail });
+  setSessionCookie(res, sessionToken);
+  req.session = { role: 'admin', admin_email: adminEmail };
+  await logAdminAction(req, 'login', 'admin', adminEmail);
+  return res.json({ success: true, adminEmail });
 });
 
 // ── GET /api/me?ref=CODE — dashboard data ─────────────────────────────────
 app.get('/api/me', lookupLimiter, async (req, res) => {
-  const ref = (req.query.ref || '').toUpperCase().trim();
-  if (!ref) return res.status(400).json({ error: 'Referral code required.' });
+  const ref = String(req.query.ref || '').toUpperCase().trim();
+  let user = null;
+  let error = null;
 
-  const { data: user, error } = await supabase
-    .from('waitlist_users')
-    .select('email, referral_code, referral_link, referrals_count, founding_member, signed_up_at')
-    .eq('referral_code', ref)
-    .maybeSingle();
+  if (req.session?.role === 'user' && req.session.user_id) {
+    ({ data: user, error } = await supabase
+      .from('waitlist_users')
+      .select('email, referral_code, referral_link, referrals_count, founding_member, signed_up_at')
+      .eq('id', req.session.user_id)
+      .maybeSingle());
+  } else {
+    if (!ref) return res.status(401).json({ error: 'Please sign in first.' });
+    ({ data: user, error } = await supabase
+      .from('waitlist_users')
+      .select('email, referral_code, referral_link, referrals_count, founding_member, signed_up_at')
+      .eq('referral_code', ref)
+      .maybeSingle());
+  }
 
   if (error || !user) return res.status(404).json({ error: 'No account found for this code.' });
 
@@ -606,7 +1075,7 @@ app.get('/api/me', lookupLimiter, async (req, res) => {
   ] = await Promise.all([
     supabase.from('waitlist_users').select('*', { count: 'exact', head: true }).lte('signed_up_at', user.signed_up_at),
     supabase.from('waitlist_users').select('*', { count: 'exact', head: true }),
-    supabase.from('waitlist_users').select('*', { count: 'exact', head: true }).ilike('referred_by', user.referral_code),
+    supabase.from('waitlist_users').select('*', { count: 'exact', head: true }).eq('referred_by', user.referral_code).eq('email_verified', true),
     getConfig(),
   ]);
 
@@ -632,64 +1101,25 @@ app.get('/api/me', lookupLimiter, async (req, res) => {
   });
 });
 
-// ── POST /api/lookup — find user by email ─────────────────────────────────
+// ── POST /api/lookup — lightweight account lookup for existing email ──────
 app.post('/api/lookup', adminLimiter, lookupLimiter, async (req, res) => {
-  const { email } = req.body || {};
-
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+  const email = normalizeEmail(req.body?.email);
+  if (!isValidEmail(email)) {
     return res.status(400).json({ error: 'Please enter a valid email address.' });
   }
-
-  const normalizedEmail = email.toLowerCase().trim();
-
-  // Admin shortcut — return admin token, skip user data
-  const adminEmail = (process.env.ADMIN_EMAIL || '').toLowerCase().trim();
-  if (adminEmail && normalizedEmail === adminEmail && process.env.ADMIN_KEY) {
-    console.log(`[WATT] Admin login: ${normalizedEmail}`);
-    return res.json({ isAdmin: true, adminKey: process.env.ADMIN_KEY });
-  }
-
   const { data: user } = await supabase
     .from('waitlist_users')
-    .select('email, referral_code, referral_link, referrals_count, founding_member, signed_up_at')
-    .eq('email', normalizedEmail)
+    .select('email_verified, password_hash')
+    .eq('email', email)
     .maybeSingle();
 
   if (!user) {
     return res.status(404).json({ error: 'No account found for this email. Are you on the waitlist?' });
   }
-
-  const [
-    { count: position },
-    { count: total },
-    { count: referralsCount, error: countErr },
-    cfg,
-  ] = await Promise.all([
-    supabase.from('waitlist_users').select('*', { count: 'exact', head: true }).lte('signed_up_at', user.signed_up_at),
-    supabase.from('waitlist_users').select('*', { count: 'exact', head: true }),
-    supabase.from('waitlist_users').select('*', { count: 'exact', head: true }).ilike('referred_by', user.referral_code),
-    getConfig(),
-  ]);
-
-  if (countErr) console.error('[WATT] /api/lookup referral count error:', countErr.message);
-
-  const referralReward     = parseInt(cfg.referral_reward_watt) || 500;
-  const foundingMultiplier = parseFloat(cfg.founding_member_multiplier) || 1.5;
-  const [local, domain]    = user.email.split('@');
-  const maskedEmail         = local.slice(0, 2) + '***@' + domain;
-
   return res.json({
-    email:            maskedEmail,
-    referralCode:     user.referral_code,
-    referralLink:     user.referral_link,
-    referralsCount:   referralsCount || 0,
-    foundingMember:   user.founding_member,
-    signedUpAt:       user.signed_up_at,
-    position:         position || 1,
-    total:            total    || 1,
-    referralReward,
-    multiplier:       user.founding_member ? foundingMultiplier : 1,
-    wattEarned:       (referralsCount || 0) * referralReward,
+    exists: true,
+    emailVerified: toBool(user.email_verified),
+    hasPassword: Boolean(user.password_hash),
   });
 });
 
@@ -698,14 +1128,15 @@ app.get('/api/leaderboard', async (req, res) => {
   // Count live referrals per referral_code by querying referred_by column
   const { data, error } = await supabase
     .from('waitlist_users')
-    .select('referral_code, referred_by, founding_member')
+    .select('referral_code, referred_by, founding_member, email_verified')
     .not('referred_by', 'is', null);
+  const verifiedRows = (data || []).filter((row) => row.referred_by && toBool(row.email_verified));
 
   if (error) return res.status(500).json({ error: error.message });
 
   // Build counts map
   const counts = {};
-  (data || []).forEach(row => {
+  verifiedRows.forEach(row => {
     const code = (row.referred_by || '').toUpperCase();
     if (code) counts[code] = (counts[code] || 0) + 1;
   });
@@ -763,16 +1194,20 @@ app.get('/api/stats', async (req, res) => {
 
 // ── GET /unsubscribe?email=... — one-click unsubscribe from emails ─────────
 app.get('/unsubscribe', async (req, res) => {
-  const email = (req.query.email || '').toLowerCase().trim();
+  const email = normalizeEmail(req.query.email);
+  const sig = String(req.query.sig || '').trim();
   const siteUrl = getSiteUrl(req);
 
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    return res.send(`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Unsubscribe — $WATT Protocol</title><style>body{margin:0;background:#080808;color:#fff;font-family:'Inter',system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px}div{max-width:420px;text-align:center}h2{color:#ef4444;margin-bottom:12px}p{color:#888;font-size:14px;line-height:1.7}a{color:#f5e642}</style></head><body><div><h2>Invalid Link</h2><p>This unsubscribe link is invalid or expired.<br>Email us at <a href="mailto:${process.env.CONTACT_EMAIL || process.env.FROM_EMAIL || process.env.SMTP_USER}">${process.env.CONTACT_EMAIL || process.env.FROM_EMAIL || process.env.SMTP_USER}</a> to opt out.</p><p style="margin-top:24px"><a href="${siteUrl}">← Back to $WATT Protocol</a></p></div></body></html>`);
+  if (!isValidEmail(email) || !sig || !constantTimeEqual(sig, signValue(`unsubscribe:${email}`))) {
+    return res.send(renderSimplePage({
+      title: 'Unsubscribe — $WATT Protocol',
+      heading: 'Invalid Link',
+      body: `This unsubscribe link is invalid or expired. Email us at <a href="mailto:${process.env.CONTACT_EMAIL || process.env.FROM_EMAIL || process.env.SMTP_USER}">${process.env.CONTACT_EMAIL || process.env.FROM_EMAIL || process.env.SMTP_USER}</a> to opt out.`,
+      siteUrl,
+      tone: 'red',
+    }));
   }
 
-  // Mark the user as unsubscribed (we store it in a watt_config key or just log it)
-  // For simplicity: remove from waitlist OR flag in DB. Here we just flag with a note.
-  // The most respectful action is to note the unsubscribe without deleting their spot.
   try {
     await supabase
       .from('waitlist_users')
@@ -782,7 +1217,12 @@ app.get('/unsubscribe', async (req, res) => {
 
   console.log(`[WATT] Unsubscribe: ${email}`);
 
-  return res.send(`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Unsubscribed — $WATT Protocol</title><style>body{margin:0;background:#080808;color:#fff;font-family:'Inter',system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px}div{max-width:420px;text-align:center}.icon{font-size:48px;margin-bottom:16px}h2{color:#f5e642;font-family:'Courier New',monospace;letter-spacing:0.05em;margin-bottom:12px}p{color:#888;font-size:14px;line-height:1.7}a{color:#f5e642;text-decoration:none}a:hover{text-decoration:underline}</style></head><body><div><div class="icon">✓</div><h2>You've been unsubscribed.</h2><p>We've removed <strong style="color:#fff">${email}</strong> from our mailing list. You won't receive any more emails from $WATT Protocol.</p><p style="margin-top:8px;font-size:12px;color:#555">Your waitlist spot is preserved. You can still access your dashboard anytime.</p><p style="margin-top:24px"><a href="${siteUrl}">← Back to $WATT Protocol</a></p></div></body></html>`);
+  return res.send(renderSimplePage({
+    title: 'Unsubscribed — $WATT Protocol',
+    heading: `You've been unsubscribed.`,
+    body: `We've removed <strong style="color:#fff">${email}</strong> from our mailing list. Your waitlist spot is preserved and you can still access your dashboard anytime.`,
+    siteUrl,
+  }));
 });
 
 // ── GET /api/announcement — public, no auth required ──────────────────────
@@ -800,10 +1240,9 @@ app.get('/api/roadmap', async (req, res) => {
 });
 
 // ── POST /api/send-dashboard-link ─────────────────────────────────────────
-app.post('/api/send-dashboard-link', async (req, res) => {
-  const { email } = req.body || {};
-
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+app.post('/api/send-dashboard-link', emailActionLimiter, async (req, res) => {
+  const email = normalizeEmail(req.body?.email);
+  if (!isValidEmail(email)) {
     return res.status(400).json({ error: 'Valid email required.' });
   }
 
@@ -815,14 +1254,15 @@ app.post('/api/send-dashboard-link', async (req, res) => {
 
   if (user) {
     const siteUrl      = getSiteUrl(req);
-    const dashboardUrl = `${siteUrl}/dashboard.html?ref=${user.referral_code}`;
+    const dashboardUrl = `${siteUrl}/dashboard.html`;
     try {
-      await transporter.sendMail({
-        from:    `"${process.env.FROM_NAME || '$WATT Protocol'}" <${process.env.FROM_EMAIL || process.env.SMTP_USER}>`,
+      await sendManagedMail({
         to:      email,
         subject: '⚡ Your $WATT Dashboard Link',
         html:    buildMagicLinkHtml(dashboardUrl, siteUrl),
         text:    `Your $WATT dashboard: ${dashboardUrl}`,
+        transactional: true,
+        siteUrl,
       });
     } catch (err) {
       console.error('[WATT] Magic link email error:', err.message);
@@ -948,7 +1388,7 @@ app.get('/api/admin/stats', requireAdmin, async (req, res) => {
     supabase.from('waitlist_users').select('*', { count: 'exact', head: true }).gte('signed_up_at', today.toISOString()),
     supabase.from('waitlist_users').select('email, referral_code, referrals_count').order('referrals_count', { ascending: false }).limit(5),
     supabase.from('waitlist_users').select('email, referral_code, founding_member, signed_up_at, referred_by').order('signed_up_at', { ascending: false }).limit(10),
-    supabase.from('waitlist_users').select('referrals_count'),
+    supabase.from('waitlist_users').select('referrals_count').eq('email_verified', true),
     getConfig(),
   ]);
 
@@ -984,6 +1424,7 @@ app.patch('/api/admin/users/:id', requireAdmin, async (req, res) => {
   const updates = Object.fromEntries(Object.entries(req.body).filter(([k]) => allowed.includes(k)));
   const { error } = await supabase.from('waitlist_users').update(updates).eq('id', req.params.id);
   if (error) return res.status(500).json({ error: error.message });
+  await logAdminAction(req, 'update_user', 'waitlist_user', req.params.id, updates);
   return res.json({ success: true });
 });
 
@@ -991,6 +1432,7 @@ app.patch('/api/admin/users/:id', requireAdmin, async (req, res) => {
 app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
   const { error } = await supabase.from('waitlist_users').delete().eq('id', req.params.id);
   if (error) return res.status(500).json({ error: error.message });
+  await logAdminAction(req, 'delete_user', 'waitlist_user', req.params.id);
   return res.json({ success: true });
 });
 
@@ -1011,11 +1453,12 @@ app.put('/api/admin/config', requireAdmin, async (req, res) => {
   const { error } = await supabase.from('watt_config').upsert(rows, { onConflict: 'key' });
   if (error) return res.status(500).json({ error: error.message });
   invalidateConfig();
+  await logAdminAction(req, 'update_config', 'config', null, req.body);
   return res.json({ success: true });
 });
 
 // POST /api/admin/resend-email/:id — resend welcome email to a user
-app.post('/api/admin/resend-email/:id', requireAdmin, async (req, res) => {
+app.post('/api/admin/resend-email/:id', requireAdmin, emailActionLimiter, async (req, res) => {
   const { data: user } = await supabase
     .from('waitlist_users')
     .select('email, referral_code, referral_link')
@@ -1028,14 +1471,16 @@ app.post('/api/admin/resend-email/:id', requireAdmin, async (req, res) => {
   const dashboardUrl = `${siteUrl}/dashboard.html?ref=${user.referral_code}`;
 
   try {
-    await transporter.sendMail({
-      from:    `"${process.env.FROM_NAME || '$WATT Protocol'}" <${process.env.FROM_EMAIL || process.env.SMTP_USER}>`,
+    await sendManagedMail({
       to:      user.email,
       subject: '⚡ Your $WATT Dashboard Link',
       html:    buildMagicLinkHtml(dashboardUrl, siteUrl),
       text:    `Your $WATT dashboard: ${dashboardUrl}`,
+      transactional: true,
+      siteUrl,
     });
     console.log(`[WATT] Admin resent dashboard email to ${user.email}`);
+    await logAdminAction(req, 'resend_email', 'waitlist_user', req.params.id, { email: user.email });
     return res.json({ success: true });
   } catch (err) {
     console.error('[WATT] Admin resend email error:', err.message);
@@ -1085,9 +1530,15 @@ app.use((_req, res) => {
 
 // ── Start ──────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`[WATT] Server  → http://localhost:${PORT}`);
-  console.log(`[WATT] SMTP    → ${process.env.SMTP_HOST}:${process.env.SMTP_PORT}`);
-  console.log(`[WATT] DB      → ${process.env.SUPABASE_URL || '⚠ SUPABASE_URL not set'}`);
-  console.log(`[WATT] Admin   → ${process.env.ADMIN_EMAIL  || '⚠ ADMIN_EMAIL not set'}`);
-});
+const isMainModule = process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
+
+if (isMainModule) {
+  app.listen(PORT, () => {
+    console.log(`[WATT] Server  → http://localhost:${PORT}`);
+    console.log(`[WATT] SMTP    → ${process.env.SMTP_HOST}:${process.env.SMTP_PORT}`);
+    console.log(`[WATT] DB      → ${process.env.SUPABASE_URL || '⚠ SUPABASE_URL not set'}`);
+    console.log(`[WATT] Admin   → ${process.env.ADMIN_EMAIL  || '⚠ ADMIN_EMAIL not set'}`);
+  });
+}
+
+export { app, hashSecret, signValue, isValidEmail };
