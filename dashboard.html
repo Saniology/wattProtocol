@@ -843,6 +843,7 @@ async function forgotPassword(event) {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Could not send reset link.');
+    alert('Check your email for the password reset link.');
     noteEl.textContent = 'If that account exists, a reset link is on the way. Check your inbox and spam folder.';
     noteEl.style.color = 'var(--yellow)';
   } catch (err) {
