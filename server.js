@@ -94,6 +94,26 @@ function normalizeEmail(email) {
   return String(email || '').trim().toLowerCase();
 }
 
+function getReplyToAddress() {
+  return normalizeEmail(process.env.CONTACT_EMAIL || process.env.FROM_EMAIL || process.env.SMTP_USER) || '';
+}
+
+function getSenderAddress() {
+  const smtpUser = normalizeEmail(process.env.SMTP_USER);
+  const fromEmail = normalizeEmail(process.env.FROM_EMAIL);
+  const allowCustomFrom = toBool(process.env.SMTP_ALLOW_CUSTOM_FROM);
+
+  if (allowCustomFrom && fromEmail) return fromEmail;
+  if (fromEmail && smtpUser && fromEmail === smtpUser) return fromEmail;
+  return smtpUser || fromEmail || '';
+}
+
+function getSenderHeader() {
+  const senderAddress = getSenderAddress();
+  const senderName = process.env.FROM_NAME || '$WATT Protocol';
+  return senderAddress ? `"${senderName}" <${senderAddress}>` : senderName;
+}
+
 function isValidEmail(email) {
   if (!email || typeof email !== 'string') return false;
   if (email.length > 254) return false;
@@ -313,8 +333,10 @@ async function sendManagedMail({ to, subject, html, text, transactional = false,
   const finalText = !transactional && siteUrl && text
     ? `${text}\n\nUnsubscribe: ${buildSignedUnsubscribeUrl(normalizedEmail, siteUrl)}`
     : text;
+  const replyTo = getReplyToAddress();
   await transporter.sendMail({
-    from: `"${process.env.FROM_NAME || '$WATT Protocol'}" <${process.env.FROM_EMAIL || process.env.SMTP_USER}>`,
+    from: getSenderHeader(),
+    replyTo: replyTo || undefined,
     to: normalizedEmail,
     subject,
     html: finalHtml,
@@ -935,7 +957,6 @@ app.get('/verify-email', async (req, res) => {
   catch { /* PDF not found — send without attachment */ }
 
   const mailOptions = {
-    from:    `"${process.env.FROM_NAME || '$WATT Protocol'}" <${process.env.FROM_EMAIL || process.env.SMTP_USER}>`,
     to:      user.email,
     subject: "⚡ You're in — $WATT Protocol. Energy to Earn.",
     html:    buildHtmlEmail(user.referral_code, referralLink, dashboardUrl, siteUrl, roadmapStages),
@@ -1671,10 +1692,17 @@ const isMainModule = process.argv[1] && fileURLToPath(import.meta.url) === path.
 
 if (isMainModule) {
   app.listen(PORT, () => {
+    const senderAddress = getSenderAddress();
+    const configuredFrom = normalizeEmail(process.env.FROM_EMAIL);
+    const smtpUser = normalizeEmail(process.env.SMTP_USER);
     console.log(`[WATT] Server  → http://localhost:${PORT}`);
     console.log(`[WATT] SMTP    → ${process.env.SMTP_HOST}:${process.env.SMTP_PORT}`);
+    console.log(`[WATT] Sender  → ${senderAddress || '⚠ sender not set'}`);
     console.log(`[WATT] DB      → ${process.env.SUPABASE_URL || '⚠ SUPABASE_URL not set'}`);
     console.log(`[WATT] Admin   → ${process.env.ADMIN_EMAIL  || '⚠ ADMIN_EMAIL not set'}`);
+    if (configuredFrom && smtpUser && configuredFrom !== smtpUser && !toBool(process.env.SMTP_ALLOW_CUSTOM_FROM)) {
+      console.warn(`[WATT] Mail warning → FROM_EMAIL (${configuredFrom}) does not match SMTP_USER (${smtpUser}). Using SMTP_USER as the actual sender for better delivery.`);
+    }
   });
 }
 
