@@ -318,17 +318,17 @@
 .waitlist-title { font-family: var(--font-display); font-size: clamp(48px,7vw,100px); line-height: 0.92; margin-bottom: 20px; position: relative; }
 .waitlist-sub { font-size: 16px; color: var(--gray5); max-width: 480px; margin: 0 auto 48px; line-height: 1.8; position: relative; }
 .waitlist-form {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
   max-width: 520px;
   margin: 0 auto;
   position: relative;
 }
 .waitlist-form input {
-  flex: 1;
   padding: 18px 24px;
   background: var(--gray2);
   border: 1px solid var(--border);
-  border-right: none;
   color: var(--white);
   font-family: var(--font-body);
   font-size: 15px;
@@ -349,6 +349,7 @@
   font-weight: 700;
   transition: background 0.3s;
   white-space: nowrap;
+  width: 100%;
 }
 .waitlist-form button:hover { background: var(--orange); color: var(--white); }
 .waitlist-success { display: none; margin-top: 16px; font-family: var(--font-mono); font-size: 12px; letter-spacing: 2px; color: var(--green); }
@@ -428,8 +429,7 @@
   .hiw-grid{grid-template-columns:1fr;}
   .sdg-goals{grid-template-columns:1fr;}
   .token-grid{grid-template-columns:1fr;}
-  .waitlist-form{flex-direction:column;}
-  .waitlist-form input{border-right:1px solid var(--border);border-bottom:none;}
+  .waitlist-form{max-width:none;}
 }
 </style>
 </head>

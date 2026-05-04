@@ -6,15 +6,13 @@
      - CDN assets → stale-while-revalidate
    ═══════════════════════════════════════════════════════ */
 
-const CACHE_VERSION = 'watt-v3';
+const CACHE_VERSION = 'watt-v4';
 const STATIC_CACHE  = `${CACHE_VERSION}-static`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 
 // App shell — pre-cached on install
 const APP_SHELL = [
   '/',
-  '/index.html',
-  '/dashboard.html',
   '/how-it-works.html',
   '/token.html',
   '/community.html',
@@ -72,9 +70,32 @@ self.addEventListener('fetch', event => {
     return;
   }
 
+  // 3. HTML navigations: network-first so UI updates show up immediately
+  if (request.mode === 'navigate' || request.destination === 'document') {
+    event.respondWith(networkFirstPage(request));
+    return;
+  }
+
   // 3. App shell & static assets: cache-first
   event.respondWith(cacheFirst(request));
 });
+
+// ── Strategy: network-first for HTML pages ─────────────────────────────────
+async function networkFirstPage(request) {
+  try {
+    const response = await fetch(request, { cache: 'no-store' });
+    if (response.ok) {
+      const cache = await caches.open(STATIC_CACHE);
+      try { cache.put(request, response.clone()); } catch {}
+    }
+    return response;
+  } catch {
+    const cached = await caches.match(request);
+    if (cached) return cached;
+    const fallback = await caches.match('/404.html');
+    return fallback || new Response('Offline', { status: 503, statusText: 'Service Unavailable' });
+  }
+}
 
 // ── Strategy: cache-first ───────────────────────────────────────────────────
 async function cacheFirst(request) {

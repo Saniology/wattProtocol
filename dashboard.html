@@ -72,10 +72,14 @@
 }
 .resend-body { font-size: 14px; color: var(--gray5); line-height: 1.8; margin-bottom: 32px; }
 .resend-form {
-  display: flex; border: 1px solid var(--border); margin-bottom: 14px;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  margin-bottom: 14px;
 }
 .resend-form input {
-  flex: 1; background: var(--gray1); border: none;
+  background: var(--gray1);
+  border: 1px solid var(--border);
   padding: 15px 18px; color: var(--white);
   font-family: var(--font-mono); font-size: 13px; outline: none;
 }
@@ -87,6 +91,7 @@
   font-family: var(--font-mono); font-size: 11px; font-weight: 700;
   letter-spacing: 0.1em; text-transform: uppercase; white-space: nowrap;
   transition: background 0.2s, color 0.2s;
+  width: 100%;
 }
 .resend-form button:hover { background: var(--orange); color: var(--white); }
 .resend-form button:disabled { opacity: 0.6; }
@@ -99,6 +104,57 @@
 }
 .resend-join { font-size: 13px; color: var(--gray4); }
 .resend-join a { color: var(--yellow); }
+
+.auth-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.74);
+  backdrop-filter: blur(4px);
+  padding: 24px;
+  z-index: 4000;
+}
+.auth-modal {
+  width: min(100%, 460px);
+  background: var(--gray1);
+  border: 1px solid var(--border);
+  padding: 28px 24px 24px;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45);
+}
+.auth-modal-tag {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--yellow);
+  margin-bottom: 12px;
+}
+.auth-modal-title {
+  font-size: 28px;
+  line-height: 1;
+  margin-bottom: 14px;
+}
+.auth-modal-body {
+  font-size: 13px;
+  line-height: 1.8;
+  color: var(--gray5);
+  margin-bottom: 20px;
+}
+.auth-modal-btn {
+  width: 100%;
+  border: none;
+  background: var(--yellow);
+  color: var(--black);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 14px 18px;
+  cursor: pointer;
+}
 
 /* ── Dashboard hero ── */
 .db-tag {
@@ -511,6 +567,15 @@
     <p class="resend-join">Not on the waitlist yet? <a href="index.html#waitlist">Join now — it's free →</a></p>
   </div>
 
+  <div class="auth-modal-backdrop" id="resetSentModal">
+    <div class="auth-modal">
+      <div class="auth-modal-tag">Password Reset</div>
+      <h2 class="auth-modal-title">Check your email.</h2>
+      <p class="auth-modal-body" id="resetSentModalMessage">If that account exists, we just sent a secure reset link. Please check your inbox and spam folder before requesting another one.</p>
+      <button class="auth-modal-btn" type="button" onclick="closeResetSentModal()">Okay</button>
+    </div>
+  </div>
+
 </div><!-- /.db-wrap -->
 
 <!-- shared.js MUST be at end of body so footer inserts after all content -->
@@ -518,6 +583,7 @@
 <script>
 const API = window.WATT_API_BASE || document.documentElement.dataset.apiBase || '';
 let resetToken = '';
+let resetCooldownUntil = 0;
 const scheduleDashboardNonCritical = (fn) => {
   if ('requestIdleCallback' in window) {
     window.requestIdleCallback(() => fn(), { timeout: 700 });
@@ -730,6 +796,15 @@ function showResetForm(message = '') {
   document.getElementById('resendNote').style.color = message ? '#ff4444' : '';
 }
 
+function openResetSentModal(message) {
+  document.getElementById('resetSentModalMessage').textContent = message;
+  document.getElementById('resetSentModal').style.display = 'flex';
+}
+
+function closeResetSentModal() {
+  document.getElementById('resetSentModal').style.display = 'none';
+}
+
 async function validateResetToken(token) {
   const res = await fetch(`${API}/api/auth/reset-password-status?token=${encodeURIComponent(token)}`);
   const data = await res.json();
@@ -830,6 +905,10 @@ async function forgotPassword(event) {
   if (event) event.preventDefault();
   const email = document.getElementById('resendEmail').value.trim();
   const noteEl = document.getElementById('resendNote');
+  if (Date.now() < resetCooldownUntil) {
+    openResetSentModal('A reset link was already requested recently. Please check your inbox and spam folder before trying again.');
+    return;
+  }
   if (!email) {
     noteEl.textContent = 'Enter your email first and then request a reset link.';
     noteEl.style.color = '#ff4444';
@@ -843,9 +922,10 @@ async function forgotPassword(event) {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Could not send reset link.');
-    alert('Check your email for the password reset link.');
+    resetCooldownUntil = Date.now() + 60_000;
     noteEl.textContent = 'If that account exists, a reset link is on the way. Check your inbox and spam folder.';
     noteEl.style.color = 'var(--yellow)';
+    openResetSentModal('If that account exists, we just sent a secure reset link. Please check your inbox and spam folder, and wait a minute before requesting another one.');
   } catch (err) {
     noteEl.textContent = err.message || 'Could not send reset link.';
     noteEl.style.color = '#ff4444';
@@ -912,6 +992,10 @@ function copyLink() {
     setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2200);
   });
 }
+
+document.getElementById('resetSentModal').addEventListener('click', function(event) {
+  if (event.target === this) closeResetSentModal();
+});
 </script>
 </body>
 </html>
